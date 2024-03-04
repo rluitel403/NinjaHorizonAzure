@@ -8,7 +8,6 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using PlayFab;
 using PlayFab.EconomyModels;
-using PlayFab.ServerModels;
 
 namespace Inventory.Function
 {
