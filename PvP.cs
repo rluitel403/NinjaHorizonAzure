@@ -15,11 +15,8 @@ using PlayFab.ServerModels;
 
 namespace Battle.Function
 {
-
     public class TurnData
     {
-        public string matchId { get; set; }
-
         public BattleReplayData battleReplayData { get; set; }
         public PlayerSharedGroupData playerData { get; set; }
         public PlayerSharedGroupData enemyData { get; set; }
@@ -28,11 +25,12 @@ namespace Battle.Function
     public class BattleReplayData
     {
         public string performedById { get; set; }
-        public string actionType { get; set; }
         public bool played { get; set; } //was the battle played
         public string sourceStackId { get; set; } //entity who performs the action
         public string targetStackId { get; set; } //entity who is the target of the action
         public int abilityIndex { get; set; } //index of the ability in the entity's ability list
+
+        public int damage { get; set; } //damage dealt
     }
 
     public class PvPCharacterInfo
@@ -43,10 +41,9 @@ namespace Battle.Function
         public int xp { get; set; }
         public Dictionary<string, Tier> itemsTier { get; set; }
     }
+
     public class PvPSelectCharacterInput
     {
-        public string actionType { get; set; }
-        public string matchId { get; set; }
         public PvPCharacterInfo selectedCharacter { get; set; }
     }
 
@@ -61,10 +58,7 @@ namespace Battle.Function
 
     public static class PvP
     {
-        public static void GetPlayerEquippedItems()
-        {
-
-        }
+        public static void GetPlayerEquippedItems() { }
 
         [FunctionName("PvP")]
         public static async Task<dynamic> Run(
@@ -91,49 +85,47 @@ namespace Battle.Function
             var multiplayerApi = new PlayFabMultiplayerInstanceAPI(apiSettings, titleContext);
             string entityId = context.CallerEntityProfile.Entity.Id;
             string actionType = context.FunctionArgument.actionType;
+            string matchId = context.FunctionArgument.matchId;
 
             switch (actionType)
             {
                 case "CreateSharedGroup":
+                {
+                    var createSharedGroupRequest = new CreateSharedGroupRequest
                     {
-                        PvPSelectCharacterInput pvpInput = JsonConvert.DeserializeObject<PvPSelectCharacterInput>(
-               context.FunctionArgument.ToString()
-           );
-                        var createSharedGroupRequest = new CreateSharedGroupRequest
+                        SharedGroupId = matchId
+                    };
+                    PlayFabResult<CreateSharedGroupResult> createSharedGroupResult =
+                        await serverApi.CreateSharedGroupAsync(createSharedGroupRequest);
+                    //if there is an error and its not due to the shared group already existing, return error
+                    if (createSharedGroupResult.Error != null)
+                    {
+                        if (createSharedGroupResult.Error.ErrorMessage != "InvalidSharedGroupId")
                         {
-                            SharedGroupId = pvpInput.matchId
-                        };
-                        PlayFabResult<CreateSharedGroupResult> createSharedGroupResult =
-                            await serverApi.CreateSharedGroupAsync(createSharedGroupRequest);
-                        //if there is an error and its not due to the shared group already existing, return error
-                        if (createSharedGroupResult.Error != null)
-                        {
-                            if (createSharedGroupResult.Error.ErrorMessage != "InvalidSharedGroupId")
+                            return new
                             {
-                                return new
-                                {
-                                    error = true,
-                                    message = createSharedGroupResult.Error.ErrorMessage
-                                };
-                            }
-                            else
-                            {
-                                return new { error = false, message = "Shared group already exists" };
-                            }
+                                error = true,
+                                message = createSharedGroupResult.Error.ErrorMessage
+                            };
                         }
-                        var getMatchResult = await multiplayerApi.GetMatchAsync(
-                            new PlayFab.MultiplayerModels.GetMatchRequest
-                            {
-                                QueueName = "PvP",
-                                MatchId = pvpInput.matchId
-                            }
-                        );
-                        int randomNumber = new Random().Next(0, 2);
-
-                        var updateSharedGroupDataRequest = new UpdateSharedGroupDataRequest
+                        else
                         {
-                            SharedGroupId = pvpInput.matchId,
-                            Data = new Dictionary<string, string>
+                            return new { error = false, message = "Shared group already exists" };
+                        }
+                    }
+                    var getMatchResult = await multiplayerApi.GetMatchAsync(
+                        new PlayFab.MultiplayerModels.GetMatchRequest
+                        {
+                            QueueName = "PvP",
+                            MatchId = matchId
+                        }
+                    );
+                    int randomNumber = new Random().Next(0, 2);
+
+                    var updateSharedGroupDataRequest = new UpdateSharedGroupDataRequest
+                    {
+                        SharedGroupId = matchId,
+                        Data = new Dictionary<string, string>
                         {
                             {
                                 entityId = getMatchResult.Result.Members[randomNumber].Entity.Id,
@@ -152,42 +144,44 @@ namespace Battle.Function
                                 )
                             }
                         }
-                        };
-                        await serverApi.UpdateSharedGroupDataAsync(updateSharedGroupDataRequest);
-                        return new { error = false, message = "Shared group created", };
-                    }
+                    };
+                    await serverApi.UpdateSharedGroupDataAsync(updateSharedGroupDataRequest);
+                    return new { error = false, message = "Shared group created", };
+                }
                 case "SelectCharacter":
+                {
+                    PvPSelectCharacterInput pvpInput =
+                        JsonConvert.DeserializeObject<PvPSelectCharacterInput>(
+                            context.FunctionArgument.pvpSelectCharacterInput.ToString()
+                        );
+                    var getSharedGroupDataRequest = new GetSharedGroupDataRequest
                     {
-                        PvPSelectCharacterInput pvpInput = JsonConvert.DeserializeObject<PvPSelectCharacterInput>(
-               context.FunctionArgument.ToString()
-           );
-                        var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-                        {
-                            SharedGroupId = pvpInput.matchId,
-                        };
-                        PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                            await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
+                        SharedGroupId = matchId,
+                    };
+                    PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
+                        await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
 
-                        string enemyEntityId = getSharedGroupDataResult
-                            .Result.Data.Where(enemy => enemy.Key != entityId)
-                            .First()
-                            .Key;
-                        PlayerSharedGroupData enemySharedGroupInput =
-                            JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                                getSharedGroupDataResult.Result.Data[enemyEntityId].Value
-                            );
-                        enemySharedGroupInput.myTurn = true;
+                    string enemyEntityId = getSharedGroupDataResult
+                        .Result.Data.Where(enemy => enemy.Key != entityId)
+                        .First()
+                        .Key;
+                    PlayerSharedGroupData enemySharedGroupInput =
+                        JsonConvert.DeserializeObject<PlayerSharedGroupData>(
+                            getSharedGroupDataResult.Result.Data[enemyEntityId].Value
+                        );
+                    enemySharedGroupInput.myTurn = true;
 
-                        PlayerSharedGroupData mySharedGroupInput =
-                            JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                                getSharedGroupDataResult.Result.Data[entityId].Value
-                            );
-                        if (mySharedGroupInput.selectedCharacters == null)
-                        {
-                            mySharedGroupInput.selectedCharacters = new List<PvPCharacterInfo>();
-                        }
-                        //get selected characters data
-                        GetInventoryItemsRequest getSelectCharacterInventoryRequest = new GetInventoryItemsRequest()
+                    PlayerSharedGroupData mySharedGroupInput =
+                        JsonConvert.DeserializeObject<PlayerSharedGroupData>(
+                            getSharedGroupDataResult.Result.Data[entityId].Value
+                        );
+                    if (mySharedGroupInput.selectedCharacters == null)
+                    {
+                        mySharedGroupInput.selectedCharacters = new List<PvPCharacterInfo>();
+                    }
+                    //get selected characters data
+                    GetInventoryItemsRequest getSelectCharacterInventoryRequest =
+                        new GetInventoryItemsRequest()
                         {
                             Entity = new PlayFab.EconomyModels.EntityKey()
                             {
@@ -196,35 +190,40 @@ namespace Battle.Function
                             },
                             CollectionId = "default",
                             Filter = "stackId eq '" + pvpInput.selectedCharacter.stackId + "'"
-
                         };
-                        var selectCharacterInventory = await economyApi.GetInventoryItemsAsync(getSelectCharacterInventoryRequest);
-                        EntityData entityData = JsonConvert.DeserializeObject<EntityData>(
-                            selectCharacterInventory.Result.Items[0].DisplayProperties.ToString()
-                        );
-                        pvpInput.selectedCharacter.xp = entityData.xp;
-                        string itemFilter = "";
-                        Dictionary<string, Tier> itemsTier = new Dictionary<string, Tier>();
-                        if (entityData.weapon != null)
-                        {
-                            itemFilter += "stackId eq '" + entityData.weapon + "' or ";
-                        }
-                        if (entityData.backItem != null)
-                        {
-                            itemFilter += "stackId eq '" + entityData.backItem + "' or ";
-                        }
-                        if (entityData.clothing != null)
-                        {
-                            itemFilter += "stackId eq '" + entityData.clothing + "' or ";
-                        }
-                        if (entityData.artifact != null)
-                        {
-                            itemFilter += "stackId eq '" + entityData.artifact + "' or ";
-                        }
-                        itemFilter = itemFilter.Length != 0 ? itemFilter.Substring(0, itemFilter.Length - 4) : itemFilter;
-                        if (itemFilter.Length != 0)
-                        {
-                            GetInventoryItemsRequest getEquippedItemsRequest = new GetInventoryItemsRequest()
+                    var selectCharacterInventory = await economyApi.GetInventoryItemsAsync(
+                        getSelectCharacterInventoryRequest
+                    );
+                    EntityData entityData = JsonConvert.DeserializeObject<EntityData>(
+                        selectCharacterInventory.Result.Items[0].DisplayProperties.ToString()
+                    );
+                    pvpInput.selectedCharacter.xp = entityData.xp;
+                    string itemFilter = "";
+                    Dictionary<string, Tier> itemsTier = new Dictionary<string, Tier>();
+                    if (entityData.weapon != null)
+                    {
+                        itemFilter += "stackId eq '" + entityData.weapon + "' or ";
+                    }
+                    if (entityData.backItem != null)
+                    {
+                        itemFilter += "stackId eq '" + entityData.backItem + "' or ";
+                    }
+                    if (entityData.clothing != null)
+                    {
+                        itemFilter += "stackId eq '" + entityData.clothing + "' or ";
+                    }
+                    if (entityData.artifact != null)
+                    {
+                        itemFilter += "stackId eq '" + entityData.artifact + "' or ";
+                    }
+                    itemFilter =
+                        itemFilter.Length != 0
+                            ? itemFilter.Substring(0, itemFilter.Length - 4)
+                            : itemFilter;
+                    if (itemFilter.Length != 0)
+                    {
+                        GetInventoryItemsRequest getEquippedItemsRequest =
+                            new GetInventoryItemsRequest()
                             {
                                 Entity = new PlayFab.EconomyModels.EntityKey()
                                 {
@@ -234,153 +233,172 @@ namespace Battle.Function
                                 CollectionId = "default",
                                 Filter = itemFilter
                             };
-                            PlayFabResult<GetInventoryItemsResponse> equippedItems = await economyApi.GetInventoryItemsAsync(getEquippedItemsRequest);
-                            foreach (InventoryItem item in equippedItems.Result.Items)
-                            {
-                                Tier itemData = JsonConvert.DeserializeObject<Tier>(
-                                    item.DisplayProperties.ToString()
-                                );
-                                itemsTier.Add(item.Id, itemData);
-                            }
-                        }
-                        pvpInput.selectedCharacter.itemsTier = itemsTier;
-                        mySharedGroupInput.selectedCharacters.Add(pvpInput.selectedCharacter);
-                        mySharedGroupInput.myTurn = false;
-
-                        //check if both sides have selected their characters and assign to random player character for turn start
-                        if (mySharedGroupInput.selectedCharacters.Count == 3 && enemySharedGroupInput.selectedCharacters.Count == 3)
+                        PlayFabResult<GetInventoryItemsResponse> equippedItems =
+                            await economyApi.GetInventoryItemsAsync(getEquippedItemsRequest);
+                        foreach (InventoryItem item in equippedItems.Result.Items)
                         {
-                            int randomNumber = new Random().Next(0, 2);
-                            if (randomNumber == 0)
-                            {
-                                mySharedGroupInput.myTurn = true;
-                                enemySharedGroupInput.myTurn = false;
-                                int randomCharacter = new Random().Next(0, mySharedGroupInput.selectedCharacters.Count);
-                                mySharedGroupInput.entityCharacterTurnStackId = mySharedGroupInput.selectedCharacters[randomCharacter].stackId;
-
-                            }
-                            else
-                            {
-                                enemySharedGroupInput.myTurn = true;
-                                mySharedGroupInput.myTurn = false;
-                                int randomCharacter = new Random().Next(0, enemySharedGroupInput.selectedCharacters.Count);
-                                enemySharedGroupInput.entityCharacterTurnStackId = enemySharedGroupInput.selectedCharacters[randomCharacter].stackId;
-                            }
+                            Tier itemData = JsonConvert.DeserializeObject<Tier>(
+                                item.DisplayProperties.ToString()
+                            );
+                            itemsTier.Add(item.Id, itemData);
                         }
+                    }
+                    pvpInput.selectedCharacter.itemsTier = itemsTier;
+                    mySharedGroupInput.selectedCharacters.Add(pvpInput.selectedCharacter);
+                    mySharedGroupInput.myTurn = false;
 
-                        var updateSharedGroupDataRequest = new UpdateSharedGroupDataRequest
+                    //check if both sides have selected their characters and assign to random player character for turn start
+                    if (
+                        mySharedGroupInput.selectedCharacters.Count == 3
+                        && enemySharedGroupInput.selectedCharacters.Count == 3
+                    )
+                    {
+                        int randomNumber = new Random().Next(0, 2);
+                        if (randomNumber == 0)
                         {
-                            SharedGroupId = pvpInput.matchId,
-                            Data = new Dictionary<string, string>
+                            mySharedGroupInput.myTurn = true;
+                            enemySharedGroupInput.myTurn = false;
+                            int randomCharacter = new Random().Next(
+                                0,
+                                mySharedGroupInput.selectedCharacters.Count
+                            );
+                            mySharedGroupInput.entityCharacterTurnStackId = mySharedGroupInput
+                                .selectedCharacters[randomCharacter]
+                                .stackId;
+                        }
+                        else
+                        {
+                            enemySharedGroupInput.myTurn = true;
+                            mySharedGroupInput.myTurn = false;
+                            int randomCharacter = new Random().Next(
+                                0,
+                                enemySharedGroupInput.selectedCharacters.Count
+                            );
+                            enemySharedGroupInput.entityCharacterTurnStackId = enemySharedGroupInput
+                                .selectedCharacters[randomCharacter]
+                                .stackId;
+                        }
+                    }
+
+                    var updateSharedGroupDataRequest = new UpdateSharedGroupDataRequest
+                    {
+                        SharedGroupId = matchId,
+                        Data = new Dictionary<string, string>
                         {
                             { entityId, JsonConvert.SerializeObject(mySharedGroupInput) },
                             { enemyEntityId, JsonConvert.SerializeObject(enemySharedGroupInput) }
                         }
-                        };
+                    };
 
-                        await serverApi.UpdateSharedGroupDataAsync(updateSharedGroupDataRequest);
-                        return new
-                        {
-                            error = false,
-                            message = "Shared group character selection updated"
-                        };
-                    }
+                    await serverApi.UpdateSharedGroupDataAsync(updateSharedGroupDataRequest);
+                    return new
+                    {
+                        error = false,
+                        message = "Shared group character selection updated"
+                    };
+                }
                 case "GetSharedGroupData":
+                {
+                    var getSharedGroupDataRequest = new GetSharedGroupDataRequest
                     {
-                        PvPSelectCharacterInput pvpInput = JsonConvert.DeserializeObject<PvPSelectCharacterInput>(
-               context.FunctionArgument.ToString()
-           );
-                        var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-                        {
-                            SharedGroupId = pvpInput.matchId,
-                        };
-                        PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                            await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
+                        SharedGroupId = matchId,
+                    };
+                    PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
+                        await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
 
-                        return new
-                        {
-                            error = false,
-                            message = "Shared group data retrieved",
-                            data = getSharedGroupDataResult.Result.Data,
-                        };
-                    }
+                    return new
+                    {
+                        error = false,
+                        message = "Shared group data retrieved",
+                        data = getSharedGroupDataResult.Result.Data,
+                    };
+                }
                 case "UpdateTurnData":
+                {
+                    TurnData turnData = JsonConvert.DeserializeObject<TurnData>(
+                        context.FunctionArgument.turnData.ToString()
+                    );
+
+                    var getSharedGroupDataRequest = new GetSharedGroupDataRequest
                     {
-                        TurnData turnData = JsonConvert.DeserializeObject<TurnData>(
-                           context.FunctionArgument.ToString()
-                       );
+                        SharedGroupId = matchId,
+                    };
+                    PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
+                        await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
 
-                        var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-                        {
-                            SharedGroupId = turnData.matchId,
-                        };
-                        PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                            await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
+                    string enemyEntityId = getSharedGroupDataResult
+                        .Result.Data.Where(enemy => enemy.Key != entityId)
+                        .First()
+                        .Key;
+                    PlayerSharedGroupData enemySharedGroup =
+                        JsonConvert.DeserializeObject<PlayerSharedGroupData>(
+                            getSharedGroupDataResult.Result.Data[enemyEntityId].Value
+                        );
+                    PlayerSharedGroupData mySharedGroup =
+                        JsonConvert.DeserializeObject<PlayerSharedGroupData>(
+                            getSharedGroupDataResult.Result.Data[entityId].Value
+                        );
 
-                        string enemyEntityId = getSharedGroupDataResult
-                            .Result.Data.Where(enemy => enemy.Key != entityId)
-                            .First()
-                            .Key;
-                        PlayerSharedGroupData enemySharedGroup =
-                            JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                                getSharedGroupDataResult.Result.Data[enemyEntityId].Value
-                            );
-                        PlayerSharedGroupData mySharedGroup =
-                            JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                                getSharedGroupDataResult.Result.Data[entityId].Value
-                            );
-
-                        int randomNumber = new Random().Next(0, 2);
-                        if (randomNumber == 0)
+                    int randomNumber = new Random().Next(0, 2);
+                    if (randomNumber == 0)
+                    {
+                        int randomCharacter = new Random().Next(
+                            0,
+                            mySharedGroup.selectedCharacters.Count
+                        );
+                        mySharedGroup.myTurn = true;
+                        enemySharedGroup.myTurn = false;
+                        mySharedGroup.entityCharacterTurnStackId = mySharedGroup
+                            .selectedCharacters[randomCharacter]
+                            .stackId;
+                        mySharedGroup.selectedCharacters = turnData.playerData.selectedCharacters;
+                    }
+                    else
+                    {
+                        int randomCharacter = new Random().Next(
+                            0,
+                            enemySharedGroup.selectedCharacters.Count
+                        );
+                        enemySharedGroup.myTurn = true;
+                        mySharedGroup.myTurn = false;
+                        enemySharedGroup.entityCharacterTurnStackId = enemySharedGroup
+                            .selectedCharacters[randomCharacter]
+                            .stackId;
+                        enemySharedGroup.selectedCharacters = turnData.enemyData.selectedCharacters;
+                    }
+                    await serverApi.UpdateSharedGroupDataAsync(
+                        new UpdateSharedGroupDataRequest
                         {
-                            int randomCharacter = new Random().Next(0, mySharedGroup.selectedCharacters.Count);
-                            mySharedGroup.myTurn = true;
-                            enemySharedGroup.myTurn = false;
-                            mySharedGroup.entityCharacterTurnStackId = mySharedGroup.selectedCharacters[randomCharacter].stackId;
-                            mySharedGroup.selectedCharacters = turnData.playerData.selectedCharacters;
-                        }
-                        else
-                        {
-                            int randomCharacter = new Random().Next(0, enemySharedGroup.selectedCharacters.Count);
-                            enemySharedGroup.myTurn = true;
-                            mySharedGroup.myTurn = false;
-                            enemySharedGroup.entityCharacterTurnStackId = enemySharedGroup.selectedCharacters[randomCharacter].stackId;
-                            enemySharedGroup.selectedCharacters = turnData.enemyData.selectedCharacters;
-                        }
-                        await serverApi.UpdateSharedGroupDataAsync(
-                            new UpdateSharedGroupDataRequest
-                            {
-                                SharedGroupId = turnData.matchId,
-                                Data = new Dictionary<string, string>
+                            SharedGroupId = matchId,
+                            Data = new Dictionary<string, string>
                             {
                                 { entityId, JsonConvert.SerializeObject(mySharedGroup) },
                                 { enemyEntityId, JsonConvert.SerializeObject(enemySharedGroup) },
                                 {
-                            "BattleReplayData",
-                            JsonConvert.SerializeObject(turnData.battleReplayData)
+                                    "BattleReplayData",
+                                    JsonConvert.SerializeObject(turnData.battleReplayData)
+                                }
+                            }
                         }
-                            }
-                            }
-                        );
-                        return mySharedGroup;
-                    }
+                    );
+                    return mySharedGroup;
+                }
                 case "GetTurnData":
+                {
+                    var getSharedGroupDataRequest = new GetSharedGroupDataRequest
                     {
-                        string matchId = context.FunctionArgument.matchId;
-                        var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-                        {
-                            SharedGroupId = matchId,
-                            Keys = new List<string> { "BattleReplayData", entityId }
-                        };
-                        PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                            await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
-                        return new
-                        {
-                            error = false,
-                            message = "Shared group data retrieved",
-                            data = getSharedGroupDataResult.Result.Data,
-                        };
-                    }
+                        SharedGroupId = matchId,
+                        Keys = new List<string> { "BattleReplayData", entityId }
+                    };
+                    PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
+                        await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
+                    return new
+                    {
+                        error = false,
+                        message = "Shared group data retrieved",
+                        data = getSharedGroupDataResult.Result.Data,
+                    };
+                }
             }
             return new { };
         }
