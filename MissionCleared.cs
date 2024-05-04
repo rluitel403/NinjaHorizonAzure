@@ -9,6 +9,7 @@ using Newtonsoft.Json;
 using PlayFab;
 using PlayFab.EconomyModels;
 using PlayFab.ServerModels;
+using EntityKey = PlayFab.EconomyModels.EntityKey;
 
 namespace Battle.Function
 {
@@ -72,6 +73,18 @@ namespace Battle.Function
         public List<Mission> missions { get; set; }
     }
 
+    public class PlayFabApiUtil
+    {
+        public PlayFabServerInstanceAPI serverApi { get; set; }
+        public PlayFabEconomyInstanceAPI economyApi { get; set; }
+
+        public EntityKey Entity { get; set; }
+
+        public string PlayFabId { get; set; }
+
+
+    }
+
     public static class MissionCleared
     {
         [FunctionName("MissionCleared")]
@@ -94,41 +107,55 @@ namespace Battle.Function
             {
                 EntityToken = context.TitleAuthenticationContext.EntityToken
             };
-            var serverApi = new PlayFabServerInstanceAPI(apiSettings, titleContext);
-            var economyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext);
+
+            var playfabUtil = new PlayFabApiUtil()
+            {
+                serverApi = new PlayFabServerInstanceAPI(apiSettings, titleContext),
+                economyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext),
+                Entity = new EntityKey()
+                {
+                    Id = context.CallerEntityProfile.Entity.Id,
+                    Type = context.CallerEntityProfile.Entity.Type
+                },
+                PlayFabId = context.CallerEntityProfile.Lineage.MasterPlayerAccountId
+            };
+
             var args = context.FunctionArgument;
             int missionGradeId = args.mission_grade_id;
             int missionId = args.mission_id;
+            int floorId = args.floor_id;
+            bool isPvE = args.pve_type == "PvE" ? true : false;
 
             string missionGrade = "missiongrade" + missionGradeId;
 
-            var combinedInfoResult = await serverApi.GetPlayerCombinedInfoAsync(new GetPlayerCombinedInfoRequest()
+            var combinedInfoResult = await playfabUtil.serverApi.GetPlayerCombinedInfoAsync(new GetPlayerCombinedInfoRequest()
             {
-                PlayFabId = context.CallerEntityProfile.Lineage.MasterPlayerAccountId,
+                PlayFabId = playfabUtil.PlayFabId,
                 InfoRequestParameters = new GetPlayerCombinedInfoRequestParams()
                 {
-                    GetPlayerStatistics = true,
+                    GetPlayerStatistics = isPvE,
                     PlayerStatisticNames = new List<string> { missionGrade },
                     GetTitleData = true,
-                    TitleDataKeys = new List<string> { "missions" }
+                    TitleDataKeys = new List<string> { "missions" },
+                    GetUserData = !isPvE,
+                    UserDataKeys = new List<string> { "HuntingHouseProgression", "SelectedCharacters" }
                 }
             });
             var missionGrades = combinedInfoResult.Result.InfoResultPayload.TitleData["missions"];
             var playerStatistics = combinedInfoResult.Result.InfoResultPayload.PlayerStatistics;
-
+            var userData = combinedInfoResult.Result.InfoResultPayload.UserData;
             int maxMissionId = 0;
-            //validate player can do this mission
-            if (playerStatistics.Count == 1)
+            if (isPvE)
             {
-                maxMissionId = playerStatistics.Find(stat => stat.StatisticName == missionGrade).Value;
-                if (maxMissionId < missionId)
-                {
-                    return new { error = true, message = "You need to unlock the first mission" };
-                }
+                maxMissionId = getVillageMissionMaxMissionId(playerStatistics, missionGrade, missionId);
+            }
+            else
+            {
+                maxMissionId = getHuntingHouseMaxBossFloor(userData, missionGradeId, missionId, floorId);
             }
 
             List<string> selectedCharacters = JsonConvert.DeserializeObject<List<string>>(
-                args.selectedCharacters.ToString(),
+                userData.GetValueOrDefault("SelectedCharacters").Value,
                 new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
             );
             string filter = "";
@@ -147,23 +174,20 @@ namespace Battle.Function
             List<StatisticUpdate> statsUpdate = new List<StatisticUpdate>();
             List<InventoryItem> inventoryItems = new List<InventoryItem>();
             List<InventoryOperation> inventoryOperations = new List<InventoryOperation>();
+            Dictionary<string, UserDataRecord> userDataRecord = new Dictionary<string, UserDataRecord>();
             GetInventoryItemsRequest getInventoryItemsRequest = new GetInventoryItemsRequest()
             {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
+                Entity = playfabUtil.Entity,
                 CollectionId = "default",
                 Filter = filter
             };
 
-            var inventory = await economyApi.GetInventoryItemsAsync(getInventoryItemsRequest);
+            var inventory = await playfabUtil.economyApi.GetInventoryItemsAsync(getInventoryItemsRequest);
             var items = inventory.Result.Items;
             //validate player has selected characters
             if (items.Count != selectedCharacters.Count)
             {
-                return new { error = true };
+                throw new Exception("Selected characters not found in inventory");
             }
 
             //parse mission data
@@ -172,8 +196,22 @@ namespace Battle.Function
                 new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
             );
             MissionGrade missionGradeData = missionGradesList.Find(mg => mg.mission_grade_id == missionGradeId);
-            int rewardXp = missionGradeData.missions[missionId].rewards.xp;
-            int rewardGold = missionGradeData.missions[missionId].rewards.gold;
+            Reward rewards = missionGradeData.missions[missionId % 10].rewards;
+            int rewardXp = rewards.xp;
+            int rewardGold = rewards.gold;
+            grantPlayerXp(statsUpdate, inventoryItems, inventoryOperations, items, rewardXp);
+
+            var firstClear = isPvE ? maxMissionId == missionId : floorId == maxMissionId;
+            await updateMissionProgress(playfabUtil, missionGradeId, missionId, floorId, isPvE, userData, statsUpdate, userDataRecord, firstClear);
+
+            grantRewards(inventoryItems, inventoryOperations, rewards, firstClear);
+            await updateInventoryAndStats(playfabUtil, statsUpdate, inventoryOperations);
+            var res = JsonConvert.SerializeObject(new { inventoryItems, statsUpdate, userDataRecord });
+            return res;
+        }
+
+        private static void grantPlayerXp(List<StatisticUpdate> statsUpdate, List<InventoryItem> inventoryItems, List<InventoryOperation> inventoryOperations, List<InventoryItem> items, int rewardXp)
+        {
             //give the characters xp
             foreach (var item in items)
             {
@@ -204,42 +242,11 @@ namespace Battle.Function
                     Value = rewardXp
                 }
             );
+        }
 
-            List<Extra> extraRewards = missionGradeData.missions[missionId].rewards.extra ?? new List<Extra>();
-            var firstClear = maxMissionId == missionId;
-            //mission progression
-            if (firstClear)
-            { //extra reward
-                int numberOfMission = missionGradeData.missions.Count - 1;
-                //unlock next mission grade if first time clearing final mission id
-                if (missionId == numberOfMission)
-                {
-                    statsUpdate.Add(
-                                       new StatisticUpdate()
-                                       { //for mission clear
-                                           StatisticName = missionGrade,
-                                           Value = 1
-                                       }
-                                   );
-                    statsUpdate.Add(
-                        new StatisticUpdate()
-                        { //for next mission
-                            StatisticName = "missiongrade" + (missionGradeId + 1),
-                            Value = 0
-                        }
-                    );
-                }
-                else
-                {
-                    statsUpdate.Add(
-                                        new StatisticUpdate()
-                                        { //for mission clear
-                                            StatisticName = missionGrade,
-                                            Value = 1
-                                        }
-                                    );
-                }
-            }
+        private static void grantRewards(List<InventoryItem> inventoryItems, List<InventoryOperation> inventoryOperations, Reward rewards, bool firstClear)
+        {
+            List<Extra> extraRewards = rewards.extra ?? new List<Extra>();
 
             foreach (var extra in extraRewards)
             {
@@ -289,7 +296,7 @@ namespace Battle.Function
                                     {
                                         Id = goldId,
                                     },
-                                    Amount = rewardGold
+                                    Amount = rewards.gold
                                 }
                             }
                         );
@@ -297,30 +304,145 @@ namespace Battle.Function
                 new InventoryItem()
                 {
                     Id = goldId,
-                    Amount = rewardGold
+                    Amount = rewards.gold
                 }
             );
+        }
 
+        private static async Task updateMissionProgress(PlayFabApiUtil playfabUtil, int missionGradeId, int missionId, int floorId, bool isPvE, Dictionary<string, UserDataRecord> userData, List<StatisticUpdate> statsUpdate, Dictionary<string, UserDataRecord> userDataRecord, bool firstClear)
+        {
+            string missionGrade = "missiongrade" + missionGradeId;
+            //mission progression
+            if (firstClear)
+            { //extra reward
+                if (isPvE)
+                {
+                    int numberOfMission = 9;
+                    //unlock next mission grade if first time clearing final mission id
+                    if (missionId == numberOfMission)
+                    {
+                        statsUpdate.Add(
+                                           new StatisticUpdate()
+                                           { //for mission clear
+                                               StatisticName = missionGrade,
+                                               Value = 1
+                                           }
+                                       );
+                        statsUpdate.Add(
+                            new StatisticUpdate()
+                            { //for next mission
+                                StatisticName = "missiongrade" + (missionGradeId + 1),
+                                Value = 0
+                            }
+                        );
+                    }
+                    else
+                    {
+                        statsUpdate.Add(
+                                            new StatisticUpdate()
+                                            { //for mission clear
+                                                StatisticName = missionGrade,
+                                                Value = 1
+                                            }
+                                        );
+                    }
+                }
+                //hunting house
+                else
+                {
+                    var huntingHouseData = new Dictionary<string, Dictionary<int, int>>();
+                    if (userData.ContainsKey("HuntingHouseProgression"))
+                    {
+                        huntingHouseData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<int, int>>>(
+                           userData["HuntingHouseProgression"].Value,
+                           new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+                       );
+                        if (huntingHouseData.ContainsKey(missionGrade))
+                        {
+                            int currentMaxFloorId = huntingHouseData[missionGrade].GetValueOrDefault(missionId, 0);
+                            huntingHouseData[missionGrade][missionId] = Math.Max(currentMaxFloorId, floorId + 1);
+                        }
+                        else
+                        {
+                            huntingHouseData[missionGrade] = new Dictionary<int, int>();
+                            huntingHouseData[missionGrade][missionId] = 1;
+                        }
+                    }
+                    else
+                    {
+                        huntingHouseData[missionGrade] = new Dictionary<int, int>();
+                        huntingHouseData[missionGrade][missionId] = 1;
+                    }
+                    var huntingHouseProgressionSerialized = JsonConvert.SerializeObject(huntingHouseData);
+                    userDataRecord.Add("HuntingHouseProgression", new UserDataRecord()
+                    {
+                        Value = huntingHouseProgressionSerialized
+                    });
+                    UpdateUserDataRequest updateUserDataRequest = new UpdateUserDataRequest()
+                    {
+                        Data = new Dictionary<string, string>()
+                            {
+                                { "HuntingHouseProgression", huntingHouseProgressionSerialized }
+                            },
+                        PlayFabId = playfabUtil.PlayFabId
+                    };
+                    await playfabUtil.serverApi.UpdateUserDataAsync(updateUserDataRequest);
+                }
+            }
+        }
+
+        private static async Task updateInventoryAndStats(PlayFabApiUtil playFabUtil, List<StatisticUpdate> statsUpdate, List<InventoryOperation> inventoryOperations)
+        {
             UpdatePlayerStatisticsRequest updateStatReq = new UpdatePlayerStatisticsRequest()
             {
-                PlayFabId = context.CallerEntityProfile.Lineage.MasterPlayerAccountId,
+                PlayFabId = playFabUtil.PlayFabId,
                 Statistics = statsUpdate
             };
-            await serverApi.UpdatePlayerStatisticsAsync(updateStatReq);
+            await playFabUtil.serverApi.UpdatePlayerStatisticsAsync(updateStatReq);
             ExecuteInventoryOperationsRequest executeInventoryOperationsRequest =
                 new ExecuteInventoryOperationsRequest()
                 {
-                    Entity = new PlayFab.EconomyModels.EntityKey()
-                    {
-                        Id = context.CallerEntityProfile.Entity.Id,
-                        Type = context.CallerEntityProfile.Entity.Type,
-                    },
+                    Entity = playFabUtil.Entity,
                     Operations = inventoryOperations,
                     CollectionId = "default"
                 };
-            await economyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
-            var res = JsonConvert.SerializeObject(new { inventoryItems, statsUpdate, error = false });
-            return res;
+            await playFabUtil.economyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
+        }
+
+        private static int getHuntingHouseMaxBossFloor(Dictionary<string, UserDataRecord> userData, int missionGradeId, int missionId, int floorId)
+        {
+            if (userData.ContainsKey("HuntingHouseProgression"))
+            {
+                var huntingHouseData = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<int, int>>>(
+                    userData["HuntingHouseProgression"].Value,
+                    new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+                );
+                string missionGrade = "missiongrade" + missionGradeId;
+                if (huntingHouseData.ContainsKey(missionGrade))
+                {
+                    int maxFloorId = huntingHouseData[missionGrade].GetValueOrDefault(missionId, 0);
+                    if (floorId > maxFloorId)
+                    {
+                        throw new Exception("Player can't do this mission");
+                    }
+                    return maxFloorId;
+                }
+            }
+            return 0;
+        }
+
+        private static int getVillageMissionMaxMissionId(List<StatisticValue> playerStatistics, string missionGrade, int missionId)
+        {
+            if (playerStatistics.Count == 1)
+            {
+                int maxMissionId = playerStatistics.Find(stat => stat.StatisticName == missionGrade).Value;
+                if (maxMissionId < missionId)
+                {
+                    throw new Exception("Player can't do this mission");
+                }
+                return maxMissionId;
+            }
+            return 0;
         }
     }
 }
