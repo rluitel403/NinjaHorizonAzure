@@ -220,11 +220,22 @@ namespace Battle.Function
             MissionGrade missionGradeData = missionGradesList.Find(mg =>
                 mg.mission_grade_id == missionGradeId
             );
-            Reward rewards = missionGradeData.missions[missionId].rewards;
+            Mission mission = missionGradeData.missions[missionId];
+            List<string> enemies = mission.enemies;
+            Reward rewards = mission.rewards;
             int rewardXp = rewards.xp;
             int rewardGold = rewards.gold;
 
-            grantPlayerXp(statsUpdate, inventoryItems, inventoryOperations, items, rewardXp);
+            float rewardScaler = isPvE ? (1 + (difficulty * 2 / 10f)) : (1 + (floorId / 18f));
+            int difficultyChanceBoost = isPvE ? Math.Max(1, difficulty * 2) : 30 + (floorId + 1) * 7;
+            float chanceBoostScaler = isPvE ? (1 + (difficulty * 1 / 2f)) : (1 + (floorId / 9f));
+            Reward grantedRewards = new Reward
+            {
+                extra = new List<Extra>(),
+                xp = (int)(rewardXp * rewardScaler),
+                gold = (int)(rewardGold * rewardScaler)
+            };
+            grantPlayerXpAndGold(statsUpdate, inventoryItems, inventoryOperations, items, grantedRewards);
 
             var firstClear = isPvE ? maxMissionId == scaledMissionId : floorId == maxMissionId;
             await updateMissionProgress(
@@ -240,7 +251,7 @@ namespace Battle.Function
                 firstClear
             );
 
-            grantRewards(inventoryItems, inventoryOperations, rewards, firstClear);
+            grantExtraRewards(inventoryItems, inventoryOperations, rewards, grantedRewards, enemies, isPvE, firstClear, difficultyChanceBoost, chanceBoostScaler);
 
             await updateInventoryAndStats(playfabUtil, statsUpdate, inventoryOperations);
             var res = JsonConvert.SerializeObject(
@@ -249,19 +260,22 @@ namespace Battle.Function
                     inventoryItems,
                     statsUpdate,
                     userDataRecord,
+                    grantedRewards
                 }
             );
             return res;
         }
 
-        private static void grantPlayerXp(
+        private static void grantPlayerXpAndGold(
             List<StatisticUpdate> statsUpdate,
             List<InventoryItem> inventoryItems,
             List<InventoryOperation> inventoryOperations,
             List<InventoryItem> items,
-            int rewardXp
+            Reward grantedRewards
         )
         {
+            int rewardXp = grantedRewards.xp;
+            int rewardGold = grantedRewards.gold;
             //give the characters xp
             foreach (var item in items)
             {
@@ -292,58 +306,6 @@ namespace Battle.Function
                     Value = rewardXp
                 }
             );
-        }
-
-        private static void grantRewards(
-            List<InventoryItem> inventoryItems,
-            List<InventoryOperation> inventoryOperations,
-            Reward rewards,
-            bool firstClear
-        )
-        {
-            List<Extra> extraRewards = rewards.extra ?? new List<Extra>();
-
-            foreach (var extra in extraRewards)
-            {
-                int randomNumber = new Random().Next(1, 101);
-                int amount = extra.amount == 0 ? 1 : extra.amount;
-                if (
-                    (extra.firstTime && firstClear)
-                    || randomNumber <= extra.chance
-                    || (extra.chance == 0 && !extra.firstTime)
-                )
-                {
-                    string stackId = Guid.NewGuid().ToString();
-                    inventoryOperations.Add(
-                        new InventoryOperation()
-                        {
-                            Add = new AddInventoryItemsOperation()
-                            {
-                                Item = new InventoryItemReference()
-                                {
-                                    Id = extra.id,
-                                    StackId = stackId,
-                                },
-                                NewStackValues = new InitialValues()
-                                {
-                                    DisplayProperties = new EntityData()
-                                },
-                                Amount = amount
-                            }
-                        }
-                    );
-                    inventoryItems.Add(
-                        new InventoryItem()
-                        {
-                            Id = extra.id,
-                            StackId = stackId,
-                            DisplayProperties = new EntityData(),
-                            Amount = amount
-                        }
-                    );
-                }
-            }
-
             //gold inventory item
             string goldId = "56afe66a-5a09-4b2d-9f39-3482c39c5779";
             inventoryOperations.Add(
@@ -352,11 +314,83 @@ namespace Battle.Function
                     Add = new AddInventoryItemsOperation()
                     {
                         Item = new InventoryItemReference() { Id = goldId, },
-                        Amount = rewards.gold
+                        Amount = rewardGold
                     }
                 }
             );
-            inventoryItems.Add(new InventoryItem() { Id = goldId, Amount = rewards.gold });
+            inventoryItems.Add(new InventoryItem() { Id = goldId, Amount = rewardGold });
+        }
+
+        private static void grantExtraRewards(
+            List<InventoryItem> inventoryItems,
+            List<InventoryOperation> inventoryOperations,
+            Reward rewards,
+            Reward grantedRewards,
+            List<string> enemies,
+            bool isPvE,
+            bool firstClear,
+            int difficultyChanceBoost,
+            float chanceBoostScaler
+        )
+        {
+            if (isPvE)
+            {
+                int randomNumber = new Random().Next(1, 101);
+                if (randomNumber <= difficultyChanceBoost)
+                {
+                    string enemyId = enemies[new Random().Next(0, enemies.Count)];
+                    addToInventory(inventoryItems, inventoryOperations, enemyId, 1, grantedRewards);
+                }
+            }
+            List<Extra> extraRewards = rewards.extra ?? new List<Extra>();
+
+            foreach (var extra in extraRewards)
+            {
+                int randomNumber = new Random().Next(1, 101);
+                int amount = extra.amount == 0 ? 1 : extra.amount;
+                int chance = extra.chance == 0 ? extra.chance + difficultyChanceBoost : (int)(extra.chance * chanceBoostScaler);
+                if (
+                    (extra.firstTime && firstClear)
+                    || randomNumber <= chance
+                )
+                {
+                    addToInventory(inventoryItems, inventoryOperations, extra.id, amount, grantedRewards);
+                }
+            }
+        }
+
+        private static void addToInventory(List<InventoryItem> inventoryItems,
+            List<InventoryOperation> inventoryOperations, string id, int amount, Reward grantedRewards)
+        {
+            string stackId = Guid.NewGuid().ToString();
+            inventoryOperations.Add(
+                new InventoryOperation()
+                {
+                    Add = new AddInventoryItemsOperation()
+                    {
+                        Item = new InventoryItemReference()
+                        {
+                            Id = id,
+                            StackId = stackId,
+                        },
+                        NewStackValues = new InitialValues()
+                        {
+                            DisplayProperties = new EntityData()
+                        },
+                        Amount = amount
+                    }
+                }
+            );
+            inventoryItems.Add(
+                new InventoryItem()
+                {
+                    Id = id,
+                    StackId = stackId,
+                    DisplayProperties = new EntityData(),
+                    Amount = amount
+                }
+            );
+            grantedRewards.extra.Add(new Extra() { id = id, amount = 1 });
         }
 
         private static async Task updateMissionProgress(
