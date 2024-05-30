@@ -27,6 +27,14 @@ namespace Battle.Function
         public T FunctionArgument { get; set; }
     }
 
+    public class BattleType
+    {
+        public static string PVE = "PVE";
+        public static string PVP = "PVP";
+        public static string PVE_HUTNING_HOUSE = "PVE_HUTNING_HOUSE";
+        public static string PVE_TOWER = "PVE_TOWER";
+    }
+
     public class EntityData
     {
         public int xp { get; set; }
@@ -120,12 +128,13 @@ namespace Battle.Function
             };
 
             var args = context.FunctionArgument;
-            int missionGradeId = args.mission_grade_id;
-            int missionId = args.mission_id;
+            int missionGradeId = args.missionGradeId;
+            int missionId = args.missionId;
             int difficulty = args.difficulty;
-            int floorId = args.floor_id;
-            string pveType = args.pve_type;
-            bool isPvE = pveType == "PvE" ? true : false;
+            int floorId = args.floorId;
+            string pveType = args.battleType;
+            bool isMissionOrTower = pveType == BattleType.PVE || pveType == BattleType.PVE_TOWER;
+            bool isMission = pveType == BattleType.PVE;
 
             string missionGrade = "missiongrade" + missionGradeId;
 
@@ -135,7 +144,7 @@ namespace Battle.Function
                     PlayFabId = playfabUtil.PlayFabId,
                     InfoRequestParameters = new GetPlayerCombinedInfoRequestParams()
                     {
-                        GetPlayerStatistics = isPvE,
+                        GetPlayerStatistics = isMissionOrTower,
                         PlayerStatisticNames = new List<string> { missionGrade },
                         GetTitleData = true,
                         TitleDataKeys = new List<string> { "missions" },
@@ -153,7 +162,7 @@ namespace Battle.Function
             var userData = combinedInfoResult.Result.InfoResultPayload.UserData;
             int maxMissionId = 0;
             int scaledMissionId = missionId + 10 * difficulty;
-            if (isPvE)
+            if (isMissionOrTower)
             {
                 maxMissionId = getVillageMissionMaxMissionId(
                     playerStatistics,
@@ -221,14 +230,16 @@ namespace Battle.Function
                 mg.mission_grade_id == missionGradeId
             );
             Mission mission = missionGradeData.missions[missionId];
+            int numberOfMissionOrTower = missionGradeData.missions.Count - 1;
             List<string> enemies = mission.enemies;
             Reward rewards = mission.rewards;
             int rewardXp = rewards.xp;
             int rewardGold = rewards.gold;
 
-            float rewardScaler = isPvE ? (1 + (difficulty * 2 / 10f)) : (1 + (floorId / 18f));
-            int difficultyChanceBoost = isPvE ? Math.Max(1, difficulty * 2) : 30 + (floorId + 1) * 7;
-            float chanceBoostScaler = isPvE ? (1 + (difficulty * 1 / 2f)) : (1 + (floorId / 9f));
+            //for tower, we use difficulty = 0, so all  values are 1 
+            float rewardScaler = isMissionOrTower ? (1 + (difficulty * 2 / 10f)) : (1 + (floorId / 18f));
+            int difficultyChanceBoost = isMissionOrTower ? Math.Max(1, difficulty * 2) : 30 + (floorId + 1) * 7;
+            float chanceBoostScaler = isMissionOrTower ? (1 + (difficulty * 1 / 2f)) : (1 + (floorId / 9f));
             Reward grantedRewards = new Reward
             {
                 extra = new List<Extra>(),
@@ -237,21 +248,23 @@ namespace Battle.Function
             };
             grantPlayerXpAndGold(statsUpdate, inventoryItems, inventoryOperations, items, grantedRewards);
 
-            var firstClear = isPvE ? maxMissionId == scaledMissionId : floorId == maxMissionId;
+            //for tower scaledMissionId is just the missionId since not scaled
+            var firstClear = isMissionOrTower ? maxMissionId == scaledMissionId : floorId == maxMissionId;
             await updateMissionProgress(
                 playfabUtil,
                 missionGradeId,
                 missionId,
                 floorId,
                 difficulty,
-                isPvE,
+                isMissionOrTower,
                 userData,
                 statsUpdate,
                 userDataRecord,
-                firstClear
+                firstClear,
+                numberOfMissionOrTower
             );
 
-            grantExtraRewards(inventoryItems, inventoryOperations, rewards, grantedRewards, enemies, isPvE, firstClear, difficultyChanceBoost, chanceBoostScaler);
+            grantExtraRewards(inventoryItems, inventoryOperations, rewards, grantedRewards, enemies, isMission, firstClear, difficultyChanceBoost, chanceBoostScaler);
 
             await updateInventoryAndStats(playfabUtil, statsUpdate, inventoryOperations);
             var res = JsonConvert.SerializeObject(
@@ -327,13 +340,13 @@ namespace Battle.Function
             Reward rewards,
             Reward grantedRewards,
             List<string> enemies,
-            bool isPvE,
+            bool isMission,
             bool firstClear,
             int difficultyChanceBoost,
             float chanceBoostScaler
         )
         {
-            if (isPvE)
+            if (isMission)
             {
                 int randomNumber = new Random().Next(1, 101);
                 if (randomNumber <= difficultyChanceBoost)
@@ -348,7 +361,9 @@ namespace Battle.Function
             {
                 int randomNumber = new Random().Next(1, 101);
                 int amount = extra.amount == 0 ? 1 : extra.amount;
-                int chance = extra.chance == 0 ? extra.chance + difficultyChanceBoost : (int)(extra.chance * chanceBoostScaler);
+                //difficulty chance boost if chance is 0, it scales with 30 - 100 for hunting house and 1 - 6 for village missions
+                //chance boost scaler if chance is not 0, it scales the existing chance by up to double its value chance to chance * 2
+                int chance = extra.chance == 0 ? difficultyChanceBoost : (int)(extra.chance * chanceBoostScaler);
                 if (
                     (extra.firstTime && firstClear)
                     || randomNumber <= chance
@@ -399,22 +414,22 @@ namespace Battle.Function
             int missionId,
             int floorId,
             int difficulty,
-            bool isPvE,
+            bool isMissionOrTower,
             Dictionary<string, UserDataRecord> userData,
             List<StatisticUpdate> statsUpdate,
             Dictionary<string, UserDataRecord> userDataRecord,
-            bool firstClear
+            bool firstClear,
+            int numberOfMissionOrTower
         )
         {
             string missionGrade = "missiongrade" + missionGradeId;
             //mission progression
             if (firstClear)
             { //extra reward
-                if (isPvE)
+                if (isMissionOrTower)
                 {
-                    int numberOfMission = 9;
                     //unlock next mission grade if first time clearing final mission id
-                    if (missionId == numberOfMission && difficulty == 0)
+                    if (missionId == numberOfMissionOrTower && difficulty == 0)
                     {
                         statsUpdate.Add(
                             new StatisticUpdate()
