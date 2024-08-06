@@ -498,10 +498,10 @@ namespace Battle.Function
                         Id = id,
                         StackId = stackId,
                     },
-                    NewStackValues = new InitialValues
-                    {
-                        DisplayProperties = new EntityData()
-                    },
+                    // NewStackValues = new InitialValues
+                    // {
+                    //     DisplayProperties = new EntityData()
+                    // },
                     Amount = amount
                 }
             });
@@ -509,7 +509,7 @@ namespace Battle.Function
             {
                 Id = id,
                 StackId = stackId,
-                DisplayProperties = new EntityData(),
+                // DisplayProperties = new EntityData(),
                 Amount = amount
             });
             grantedRewards.extra.Add(new Extra { id = id, amount = amount });
