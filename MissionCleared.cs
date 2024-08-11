@@ -165,6 +165,7 @@ namespace Battle.Function
             var playerInfo = await GetPlayerInfo(playfabUtil, missionContext);
 
             var missionData = ParseMissionData(playerInfo.TitleData["missions"], missionContext);
+            missionContext.NumberOfMissionOrTower = missionData.NumberOfMissionOrTower;
             ValidatePlayerCharacters(playerInfo.Inventory, playerInfo.SelectedCharacters);
 
             var rewardContext = CalculateRewards(missionContext, missionData, playerInfo.MaxMissionId);
