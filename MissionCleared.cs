@@ -57,6 +57,8 @@ namespace Battle.Function
         public string id { get; set; }
         public int amount { get; set; }
         public int chance { get; set; }
+
+        public bool stackable { get; set; }
     }
 
     public class Reward
@@ -471,7 +473,7 @@ namespace Battle.Function
             if (randomNumber <= rewardContext.DifficultyChanceBoost)
             {
                 string enemyId = missionData.Enemies[new Random().Next(0, missionData.Enemies.Count)];
-                AddToInventory(resultData, enemyId, 1, rewardContext.GrantedRewards);
+                AddToInventory(resultData, new Extra() { id = enemyId, stackable = false }, 1, rewardContext.GrantedRewards);
             }
         }
 
@@ -483,13 +485,14 @@ namespace Battle.Function
 
             if ((extra.firstTime && rewardContext.FirstClear) || randomNumber <= chance)
             {
-                AddToInventory(resultData, extra.id, amount, rewardContext.GrantedRewards);
+                AddToInventory(resultData, extra, amount, rewardContext.GrantedRewards);
             }
         }
 
-        private static void AddToInventory(ResultData resultData, string id, int amount, Reward grantedRewards)
+        private static void AddToInventory(ResultData resultData, Extra extra, int amount, Reward grantedRewards)
         {
-            string stackId = Guid.NewGuid().ToString();
+            string id = extra.id;
+            string stackId = extra.stackable ? null : Guid.NewGuid().ToString();
             resultData.InventoryOperations.Add(new InventoryOperation
             {
                 Add = new AddInventoryItemsOperation
