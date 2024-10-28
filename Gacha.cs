@@ -11,12 +11,20 @@ using PlayFab.EconomyModels;
 
 namespace Inventory.Function
 {
+    public class GachaItem
+    {
+        public string type;
+        public string itemId;
+        public int amount;
+    }
+
     public static class Gacha
     {
         [FunctionName("Gacha")]
         public static async Task<dynamic> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
-            ILogger log)
+            ILogger log
+        )
         {
             FunctionExecutionContext<dynamic> context = JsonConvert.DeserializeObject<
                 FunctionExecutionContext<dynamic>
@@ -34,19 +42,25 @@ namespace Inventory.Function
             };
             var serverApi = new PlayFabServerInstanceAPI(apiSettings, titleContext);
             var economyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext);
-            var args = context.FunctionArgument;
+
+            var wheelData = await serverApi.GetTitleDataAsync(
+                new PlayFab.ServerModels.GetTitleDataRequest { Keys = new List<string> { "wheel" } }
+            );
+            List<GachaItem> gachaItems = JsonConvert.DeserializeObject<List<GachaItem>>(
+                wheelData.Result.Data["wheel"].ToString()
+            );
 
             Dictionary<int, double> items = new Dictionary<int, double>()
-                {
-                    { 0, 30 },
-                    { 1, 30 },
-                    { 2, 20 },
-                    { 3, 10 },
-                    { 4, 30 },
-                    { 5, 5 },
-                    { 6, 10 },
-                    { 7, 5 }
-                };
+            {
+                { 0, 30 },
+                { 1, 30 },
+                { 2, 20 },
+                { 3, 10 },
+                { 4, 30 },
+                { 5, 5 },
+                { 6, 10 },
+                { 7, 5 }
+            };
             Random rand = new Random();
             double totalWeight = 0;
             foreach (double weight in items.Values)
@@ -65,6 +79,15 @@ namespace Inventory.Function
                     break;
                 }
             }
+
+            string itemId = gachaItems[itemIndex].itemId;
+             var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
+            {
+                Entity = playfabUtil.Entity,
+                Operations = resultData.InventoryOperations,
+                CollectionId = "default"
+            };
+            await playfabUtil.EconomyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
 
             return itemIndex;
         }
