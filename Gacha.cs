@@ -16,6 +16,7 @@ namespace Inventory.Function
         public string type;
         public string itemId;
         public int amount;
+        public int chance;
     }
 
     public static class Gacha
@@ -50,17 +51,35 @@ namespace Inventory.Function
                 wheelData.Result.Data["wheel"].ToString()
             );
 
-            Dictionary<int, double> items = new Dictionary<int, double>()
+            string coinItemId = "bf180bae-b805-43c9-99db-e2e8fc1a0719";
+            string coinItemFilter = "id eq '" + coinItemId + "'";
+            GetInventoryItemsRequest getCoinRequest = new GetInventoryItemsRequest()
             {
-                { 0, 30 },
-                { 1, 30 },
-                { 2, 20 },
-                { 3, 10 },
-                { 4, 30 },
-                { 5, 5 },
-                { 6, 10 },
-                { 7, 5 }
+                Entity = new PlayFab.EconomyModels.EntityKey()
+                {
+                    Id = context.CallerEntityProfile.Entity.Id,
+                    Type = context.CallerEntityProfile.Entity.Type,
+                },
+                CollectionId = "default",
+                Filter = coinItemFilter
             };
+            var getCoinResponse = await economyApi.GetInventoryItemsAsync(getCoinRequest);
+            var coinItem = getCoinResponse.Result.Items;
+            if (coinItem.Count != 1)
+            {
+                throw new Exception("User does not have coins");
+            }
+            var coinAmount = coinItem[0].Amount;
+            if (coinAmount < 1)
+            {
+                throw new Exception("Insufficient amount of coin");
+            }
+
+            Dictionary<int, double> items = new Dictionary<int, double>();
+            for (int i = 0; i < gachaItems.Count; i++)
+            {
+                items[i] = gachaItems[i].chance;
+            }
             Random rand = new Random();
             double totalWeight = 0;
             foreach (double weight in items.Values)
@@ -79,17 +98,50 @@ namespace Inventory.Function
                     break;
                 }
             }
+            GachaItem item = gachaItems[itemIndex];
+            string itemId = item.itemId;
 
-            string itemId = gachaItems[itemIndex].itemId;
-             var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
+            string stackId = item.type != "Currency" ? Guid.NewGuid().ToString() : null;
+
+            List<InventoryOperation> inventoryOperations = new List<InventoryOperation>{
+                new InventoryOperation
+                {
+                    Subtract = new SubtractInventoryItemsOperation
+                    {
+                        Amount = 1,
+                        Item = new InventoryItemReference{
+                            Id = coinItemId
+                        }
+                    }
+                },
+                new InventoryOperation
+                {
+                    Add = new AddInventoryItemsOperation{
+                        Amount = item.amount,
+                        Item = new InventoryItemReference()
+                        {
+                            Id = itemId,
+                            StackId = stackId
+                        },
+                    }
+                }
+            };
+            var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
             {
-                Entity = playfabUtil.Entity,
-                Operations = resultData.InventoryOperations,
+                Entity = new PlayFab.EconomyModels.EntityKey()
+                {
+                    Id = context.CallerEntityProfile.Entity.Id,
+                    Type = context.CallerEntityProfile.Entity.Type,
+                },
+                Operations = inventoryOperations,
                 CollectionId = "default"
             };
-            await playfabUtil.EconomyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
+            await economyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
 
-            return itemIndex;
+            List<InventoryItem> inventoryItems = new List<InventoryItem> { new InventoryItem() { Amount = item.amount, Id = itemId, StackId = stackId }, new InventoryItem() { Amount = -1, Id = coinItemId } };
+
+            return new { itemIndex, inventoryItems };
         }
+
     }
 }
