@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Threading.Tasks;
-using Inventory.Function;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
@@ -13,7 +11,7 @@ using PlayFab;
 using PlayFab.EconomyModels;
 using PlayFab.ServerModels;
 
-namespace Battle.Function
+namespace NinjaHorizon.Function
 {
     public class TurnData
     {

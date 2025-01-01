@@ -12,7 +12,7 @@ using PlayFab.EconomyModels;
 using PlayFab.ServerModels;
 using EntityKey = PlayFab.EconomyModels.EntityKey;
 
-namespace Battle.Function
+namespace NinjaHorizon.Function
 {
     public class TitleAuthenticationContext
     {
@@ -43,6 +43,7 @@ namespace Battle.Function
         public string backItem { get; set; }
         public string clothing { get; set; }
         public string artifact { get; set; }
+        public int tier { get; set; }
     }
 
     public class MissionClearedUpdatedData

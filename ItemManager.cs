@@ -9,30 +9,8 @@ using Newtonsoft.Json;
 using PlayFab;
 using PlayFab.EconomyModels;
 
-namespace Inventory.Function
+namespace NinjaHorizon.Function
 {
-    public class TitleAuthenticationContext
-    {
-        public string Id { get; set; }
-        public string EntityToken { get; set; }
-    }
-
-    public class FunctionExecutionContext<T>
-    {
-        public PlayFab.ProfilesModels.EntityProfileBody CallerEntityProfile { get; set; }
-        public TitleAuthenticationContext TitleAuthenticationContext { get; set; }
-        public bool? GeneratePlayStreamEvent { get; set; }
-        public T FunctionArgument { get; set; }
-    }
-
-    public class EntityData
-    {
-        public string xp { get; set; }
-        public string weapon { get; set; }
-        public string backItem { get; set; }
-        public string clothing { get; set; }
-        public string artifact { get; set; }
-    }
 
     public static class ItemManager
     {

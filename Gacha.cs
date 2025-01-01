@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using PlayFab;
 using PlayFab.EconomyModels;
 
-namespace Inventory.Function
+namespace NinjaHorizon.Function
 {
     public class GachaItem
     {
