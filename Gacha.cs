@@ -6,7 +6,6 @@ using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using PlayFab;
 using PlayFab.EconomyModels;
 
 namespace NinjaHorizon.Function
@@ -27,44 +26,18 @@ namespace NinjaHorizon.Function
             ILogger log
         )
         {
-            FunctionExecutionContext<dynamic> context = JsonConvert.DeserializeObject<
-                FunctionExecutionContext<dynamic>
-            >(await req.ReadAsStringAsync());
+            var context = await PlayFabUtil.ParseFunctionContext(req);
+            var playfabUtil = PlayFabUtil.InitializeFromContext(context);
 
-            var apiSettings = new PlayFabApiSettings()
-            {
-                TitleId = context.TitleAuthenticationContext.Id,
-                DeveloperSecretKey = Environment.GetEnvironmentVariable("DeveloperSecretKey"),
-            };
-
-            PlayFabAuthenticationContext titleContext = new PlayFabAuthenticationContext
-            {
-                EntityToken = context.TitleAuthenticationContext.EntityToken
-            };
-            var serverApi = new PlayFabServerInstanceAPI(apiSettings, titleContext);
-            var economyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext);
-
-            var wheelData = await serverApi.GetTitleDataAsync(
-                new PlayFab.ServerModels.GetTitleDataRequest { Keys = new List<string> { "wheel" } }
-            );
+            var wheelData = await playfabUtil.GetTitleData(new List<string> { "wheel" });
             List<GachaItem> gachaItems = JsonConvert.DeserializeObject<List<GachaItem>>(
-                wheelData.Result.Data["wheel"].ToString()
+                wheelData.Data["wheel"].ToString()
             );
 
             string coinItemId = "bf180bae-b805-43c9-99db-e2e8fc1a0719";
             string coinItemFilter = "id eq '" + coinItemId + "'";
-            GetInventoryItemsRequest getCoinRequest = new GetInventoryItemsRequest()
-            {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
-                CollectionId = "default",
-                Filter = coinItemFilter
-            };
-            var getCoinResponse = await economyApi.GetInventoryItemsAsync(getCoinRequest);
-            var coinItem = getCoinResponse.Result.Items;
+            var getCoinResponse = await playfabUtil.GetInventoryItems(coinItemFilter);
+            var coinItem = getCoinResponse.Items;
             if (coinItem.Count != 1)
             {
                 throw new Exception("User does not have coins");
@@ -126,22 +99,15 @@ namespace NinjaHorizon.Function
                     }
                 }
             };
-            var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
-            {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
-                Operations = inventoryOperations,
-                CollectionId = "default"
-            };
-            await economyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
 
-            List<InventoryItem> inventoryItems = new List<InventoryItem> { new InventoryItem() { Amount = item.amount, Id = itemId, StackId = stackId }, new InventoryItem() { Amount = -1, Id = coinItemId } };
+            await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
+
+            List<InventoryItem> inventoryItems = new List<InventoryItem> {
+                new InventoryItem() { Amount = item.amount, Id = itemId, StackId = stackId },
+                new InventoryItem() { Amount = -1, Id = coinItemId }
+            };
 
             return new { itemIndex, inventoryItems };
         }
-
     }
 }

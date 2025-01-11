@@ -6,7 +6,6 @@ using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using PlayFab;
 using PlayFab.EconomyModels;
 
 namespace NinjaHorizon.Function
@@ -16,11 +15,12 @@ namespace NinjaHorizon.Function
         public string requiredItemId;
         public int amount;
     }
+
     public class Tier
     {
         public int tier { get; set; }
-
     }
+
     public static class UpgradeItem
     {
         [FunctionName("UpgradeItem")]
@@ -28,70 +28,37 @@ namespace NinjaHorizon.Function
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
             ILogger log)
         {
-            FunctionExecutionContext<dynamic> context = JsonConvert.DeserializeObject<
-                FunctionExecutionContext<dynamic>
-            >(await req.ReadAsStringAsync());
-
-            var apiSettings = new PlayFabApiSettings()
-            {
-                TitleId = context.TitleAuthenticationContext.Id,
-                DeveloperSecretKey = Environment.GetEnvironmentVariable("DeveloperSecretKey"),
-            };
-
-            PlayFabAuthenticationContext titleContext = new PlayFabAuthenticationContext
-            {
-                EntityToken = context.TitleAuthenticationContext.EntityToken
-            };
-            var serverApi = new PlayFabServerInstanceAPI(apiSettings, titleContext);
-            var economyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext);
+            var context = await PlayFabUtil.ParseFunctionContext(req);
+            var playfabUtil = PlayFabUtil.InitializeFromContext(context);
             var args = context.FunctionArgument;
 
-            var upgradeItemRequirementData = await serverApi.GetTitleDataAsync(
-                new PlayFab.ServerModels.GetTitleDataRequest { Keys = new List<string> { "upgradeItemRequirement" } }
+            var upgradeItemRequirementData = await playfabUtil.GetTitleData(
+                new List<string> { "upgradeItemRequirement" }
             );
             Dictionary<int, UpgradeItemRequirement> upgradeItemRequirements = JsonConvert.DeserializeObject<Dictionary<int, UpgradeItemRequirement>>(
-                upgradeItemRequirementData.Result.Data["upgradeItemRequirement"].ToString()
+                upgradeItemRequirementData.Data["upgradeItemRequirement"].ToString()
             );
 
             string itemId = args.itemId;
             string upgradeItemFilter = "stackId eq '" + itemId + "'";
-            GetInventoryItemsRequest getUpgradeItemRequest = new GetInventoryItemsRequest()
-            {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
-                CollectionId = "default",
-                Filter = upgradeItemFilter
-            };
-            var getUpgradeItemResult = await economyApi.GetInventoryItemsAsync(getUpgradeItemRequest);
-            var upgradeItem = getUpgradeItemResult.Result.Items;
+            var getUpgradeItemResult = await playfabUtil.GetInventoryItems(upgradeItemFilter);
+            var upgradeItem = getUpgradeItemResult.Items;
             if (upgradeItem.Count != 1)
             {
                 throw new Exception("User does not have the required item");
             }
+
             var item = upgradeItem[0];
             Tier itemData = JsonConvert.DeserializeObject<Tier>(
                item.DisplayProperties.ToString(),
                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
-           );
+            );
 
-            //validate user has sufficent materials to upgrade item
+            //validate user has sufficient materials to upgrade item
             UpgradeItemRequirement upgradeItemRequirement = upgradeItemRequirements[itemData.tier + 1];
             string requiredItemFilter = "id eq '" + upgradeItemRequirement.requiredItemId + "'";
-            GetInventoryItemsRequest getRequiredItemRequest = new GetInventoryItemsRequest()
-            {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
-                CollectionId = "default",
-                Filter = requiredItemFilter
-            };
-            var getRequiredItemResponse = await economyApi.GetInventoryItemsAsync(getRequiredItemRequest);
-            var requiredItem = getRequiredItemResponse.Result.Items;
+            var getRequiredItemResponse = await playfabUtil.GetInventoryItems(requiredItemFilter);
+            var requiredItem = getRequiredItemResponse.Items;
             if (requiredItem.Count != 1)
             {
                 throw new Exception("User does not have the required item");
@@ -100,7 +67,6 @@ namespace NinjaHorizon.Function
             {
                 throw new Exception("Insufficient amount of item for upgrade");
             }
-
 
             itemData.tier += 1;
             var updateUpgradeItem = new InventoryItem()
@@ -115,6 +81,7 @@ namespace NinjaHorizon.Function
                 Id = upgradeItemRequirement.requiredItemId,
                 Amount = requiredItem[0].Amount - upgradeItemRequirement.amount
             };
+
             List<InventoryOperation> inventoryOperations = new List<InventoryOperation>{
                 new InventoryOperation
                 {
@@ -131,18 +98,10 @@ namespace NinjaHorizon.Function
                     }
                 }
             };
-            var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
-            {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
-                Operations = inventoryOperations,
-                CollectionId = "default"
-            };
-            await economyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
+
+            await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
             updateMaterial.Amount = -upgradeItemRequirement.amount; //ui adds values for currency/materials so we negate for materials. for items, it updates.
+
             return JsonConvert.SerializeObject(
                 new
                 {

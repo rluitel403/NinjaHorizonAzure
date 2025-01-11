@@ -14,19 +14,6 @@ using EntityKey = PlayFab.EconomyModels.EntityKey;
 
 namespace NinjaHorizon.Function
 {
-    public class TitleAuthenticationContext
-    {
-        public string Id { get; set; }
-        public string EntityToken { get; set; }
-    }
-
-    public class FunctionExecutionContext<T>
-    {
-        public PlayFab.ProfilesModels.EntityProfileBody CallerEntityProfile { get; set; }
-        public TitleAuthenticationContext TitleAuthenticationContext { get; set; }
-        public bool? GeneratePlayStreamEvent { get; set; }
-        public T FunctionArgument { get; set; }
-    }
 
     public class BattleType
     {
@@ -68,6 +55,8 @@ namespace NinjaHorizon.Function
         public int xp { get; set; }
 
         public int token { get; set; }
+
+        public int energy { get; set; }
 
         public List<Extra> extra { get; set; }
     }
@@ -156,6 +145,14 @@ namespace NinjaHorizon.Function
         public string PlayFabId { get; set; }
     }
 
+    public class EnergyData
+    {
+        public int currentEnergy { get; set; }
+        public int maxEnergy { get; set; }
+
+        public string lastUpdatedTime { get; set; }
+    }
+
 
     public static class MissionCleared
     {
@@ -164,8 +161,8 @@ namespace NinjaHorizon.Function
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
             ILogger log)
         {
-            var context = await ParseFunctionContext(req);
-            var playfabUtil = InitializePlayFabUtil(context);
+            var context = await PlayFabUtil.ParseFunctionContext(req);
+            var playfabUtil = PlayFabUtil.InitializeFromContext(context);
             var args = context.FunctionArgument;
 
             var missionContext = new MissionContext(args);
@@ -178,9 +175,9 @@ namespace NinjaHorizon.Function
             var rewardContext = CalculateRewards(missionContext, missionData, playerInfo.MaxMissionId);
             var resultData = new ResultData();
 
-            await UpdateProgress(playfabUtil, missionContext, playerInfo, rewardContext, resultData);
-            GrantRewards(playfabUtil, missionContext, missionData, rewardContext, playerInfo.Inventory, resultData);
-            await UpdateInventoryAndStats(playfabUtil, resultData);
+            UpdateProgress(missionContext, playerInfo, rewardContext, resultData);
+            GrantRewards(missionContext, playerInfo, missionData, rewardContext, playerInfo.Inventory, resultData);
+            await UpdatePlayerData(playfabUtil, resultData);
 
             return JsonConvert.SerializeObject(new
             {
@@ -191,38 +188,7 @@ namespace NinjaHorizon.Function
             });
         }
 
-        private static async Task<FunctionExecutionContext<dynamic>> ParseFunctionContext(HttpRequest req)
-        {
-            return JsonConvert.DeserializeObject<FunctionExecutionContext<dynamic>>(await req.ReadAsStringAsync());
-        }
-
-        private static PlayFabApiUtil InitializePlayFabUtil(FunctionExecutionContext<dynamic> context)
-        {
-            var apiSettings = new PlayFabApiSettings
-            {
-                TitleId = context.TitleAuthenticationContext.Id,
-                DeveloperSecretKey = Environment.GetEnvironmentVariable("DeveloperSecretKey"),
-            };
-
-            var titleContext = new PlayFabAuthenticationContext
-            {
-                EntityToken = context.TitleAuthenticationContext.EntityToken
-            };
-
-            return new PlayFabApiUtil
-            {
-                ServerApi = new PlayFabServerInstanceAPI(apiSettings, titleContext),
-                EconomyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext),
-                Entity = new EntityKey
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type
-                },
-                PlayFabId = context.CallerEntityProfile.Lineage.MasterPlayerAccountId
-            };
-        }
-
-        private static async Task<PlayerInfo> GetPlayerInfo(PlayFabApiUtil playfabUtil, MissionContext missionContext)
+        private static async Task<PlayerInfo> GetPlayerInfo(PlayFabUtil playfabUtil, MissionContext missionContext)
         {
             var combinedInfoResult = await playfabUtil.ServerApi.GetPlayerCombinedInfoAsync(
                 new GetPlayerCombinedInfoRequest
@@ -235,7 +201,7 @@ namespace NinjaHorizon.Function
                         GetTitleData = true,
                         TitleDataKeys = new List<string> { "missions" },
                         GetUserData = true,
-                        UserDataKeys = new List<string> { "HuntingHouseProgression", "SelectedCharacters" }
+                        UserDataKeys = new List<string> { "HuntingHouseProgression", "SelectedCharacters", "EnergyData" }
                     }
                 }
             );
@@ -260,7 +226,7 @@ namespace NinjaHorizon.Function
             return playerInfo;
         }
 
-        private static async Task<List<InventoryItem>> GetPlayerInventory(PlayFabApiUtil playfabUtil, List<string> selectedCharacters)
+        private static async Task<List<InventoryItem>> GetPlayerInventory(PlayFabUtil playfabUtil, List<string> selectedCharacters)
         {
             string filter = string.Join(" or ", selectedCharacters.Select(c => $"stackId eq '{c}'"));
 
@@ -367,8 +333,7 @@ namespace NinjaHorizon.Function
             };
         }
 
-        private static async Task UpdateProgress(
-            PlayFabApiUtil playfabUtil,
+        private static void UpdateProgress(
             MissionContext missionContext,
             PlayerInfo playerInfo,
             RewardContext rewardContext,
@@ -386,7 +351,7 @@ namespace NinjaHorizon.Function
                 }
                 else
                 {
-                    await UpdateHuntingHouseProgress(playfabUtil, missionContext, playerInfo, resultData);
+                    UpdateHuntingHouseProgress(missionContext, playerInfo, resultData);
                 }
             }
         }
@@ -419,8 +384,7 @@ namespace NinjaHorizon.Function
             });
         }
 
-        private static async Task UpdateHuntingHouseProgress(
-            PlayFabApiUtil playfabUtil,
+        private static void UpdateHuntingHouseProgress(
             MissionContext missionContext,
             PlayerInfo playerInfo,
             ResultData resultData)
@@ -444,17 +408,11 @@ namespace NinjaHorizon.Function
 
             var huntingHouseProgressionSerialized = JsonConvert.SerializeObject(huntingHouseData);
             resultData.UserDataRecord["HuntingHouseProgression"] = new UserDataRecord { Value = huntingHouseProgressionSerialized };
-
-            await playfabUtil.ServerApi.UpdateUserDataAsync(new UpdateUserDataRequest
-            {
-                Data = new Dictionary<string, string> { { "HuntingHouseProgression", huntingHouseProgressionSerialized } },
-                PlayFabId = playfabUtil.PlayFabId
-            });
         }
 
         private static void GrantRewards(
-            PlayFabApiUtil playfabUtil,
             MissionContext missionContext,
+            PlayerInfo playerInfo,
             MissionData missionData,
             RewardContext rewardContext,
             List<InventoryItem> inventory,
@@ -462,6 +420,27 @@ namespace NinjaHorizon.Function
         {
             GrantPlayerXpAndGold(inventory, rewardContext.GrantedRewards, resultData);
             GrantExtraRewards(missionContext, missionData, rewardContext, resultData);
+            TryGrantEnergyReward(rewardContext, playerInfo, resultData);
+        }
+
+        private static void TryGrantEnergyReward(RewardContext rewardContext, PlayerInfo playerInfo, ResultData resultData)
+        {
+            int randomNumber = new Random().Next(1, 101);
+            int energyAmountToGrant = 1;
+            if (randomNumber <= 30)
+            {
+                EnergyData energyData = JsonConvert.DeserializeObject<EnergyData>(
+                    playerInfo.UserData.GetValueOrDefault("EnergyData").Value,
+                    new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+                );
+                energyData.currentEnergy = Math.Min(energyData.currentEnergy + energyAmountToGrant, energyData.maxEnergy);
+                resultData.UserDataRecord["EnergyData"] = new UserDataRecord { Value = JsonConvert.SerializeObject(energyData) };
+                rewardContext.GrantedRewards.energy = energyAmountToGrant;
+            }
+            else
+            {
+                rewardContext.GrantedRewards.energy = 0;
+            }
         }
 
         private static void GrantPlayerXpAndGold(List<InventoryItem> inventory, Reward grantedRewards, ResultData resultData)
@@ -585,22 +564,44 @@ namespace NinjaHorizon.Function
             grantedRewards.extra.Add(new Extra { id = id, amount = amount });
         }
 
-        private static async Task UpdateInventoryAndStats(PlayFabApiUtil playfabUtil, ResultData resultData)
+        private static async Task UpdatePlayerData(PlayFabUtil playfabUtil, ResultData resultData)
         {
-            var updateStatReq = new UpdatePlayerStatisticsRequest
+            // Update player statistics
+            if (resultData.StatsUpdate.Any())
             {
-                PlayFabId = playfabUtil.PlayFabId,
-                Statistics = resultData.StatsUpdate
-            };
-            await playfabUtil.ServerApi.UpdatePlayerStatisticsAsync(updateStatReq);
+                var updateStatReq = new UpdatePlayerStatisticsRequest
+                {
+                    PlayFabId = playfabUtil.PlayFabId,
+                    Statistics = resultData.StatsUpdate
+                };
+                await playfabUtil.ServerApi.UpdatePlayerStatisticsAsync(updateStatReq);
+            }
 
-            var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
+            // Update user data (EnergyData, HuntingHouseProgression, etc.)
+            if (resultData.UserDataRecord.Any())
             {
-                Entity = playfabUtil.Entity,
-                Operations = resultData.InventoryOperations,
-                CollectionId = "default"
-            };
-            await playfabUtil.EconomyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
+                var updateUserDataRequest = new UpdateUserDataRequest
+                {
+                    PlayFabId = playfabUtil.PlayFabId,
+                    Data = resultData.UserDataRecord.ToDictionary(
+                        kvp => kvp.Key,
+                        kvp => kvp.Value.Value
+                    )
+                };
+                await playfabUtil.ServerApi.UpdateUserDataAsync(updateUserDataRequest);
+            }
+
+            // Update inventory
+            if (resultData.InventoryOperations.Any())
+            {
+                var executeInventoryOperationsRequest = new ExecuteInventoryOperationsRequest
+                {
+                    Entity = playfabUtil.Entity,
+                    Operations = resultData.InventoryOperations,
+                    CollectionId = "default"
+                };
+                await playfabUtil.EconomyApi.ExecuteInventoryOperationsAsync(executeInventoryOperationsRequest);
+            }
         }
 
         private static int GetMissionOrTowerMaxMissionId(List<StatisticValue> playerStatistics, string missionGrade, int scaledMissionId)

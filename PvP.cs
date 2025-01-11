@@ -66,9 +66,7 @@ namespace NinjaHorizon.Function
             ILogger log
         )
         {
-            FunctionExecutionContext<dynamic> context = JsonConvert.DeserializeObject<
-                FunctionExecutionContext<dynamic>
-            >(await req.ReadAsStringAsync());
+            var context = await PlayFabUtil.ParseFunctionContext(req);
 
             var apiSettings = new PlayFabApiSettings()
             {
