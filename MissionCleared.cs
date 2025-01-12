@@ -433,7 +433,7 @@ namespace NinjaHorizon.Function
                     playerInfo.UserData.GetValueOrDefault("EnergyData").Value,
                     new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
                 );
-                energyData.currentEnergy = Math.Min(energyData.currentEnergy + energyAmountToGrant, energyData.maxEnergy);
+                energyData.currentEnergy = energyData.currentEnergy + energyAmountToGrant;
                 resultData.UserDataRecord["EnergyData"] = new UserDataRecord { Value = JsonConvert.SerializeObject(energyData) };
                 rewardContext.GrantedRewards.energy = energyAmountToGrant;
             }
