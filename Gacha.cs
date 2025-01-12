@@ -76,34 +76,36 @@ namespace NinjaHorizon.Function
 
             string stackId = item.type != "Currency" ? Guid.NewGuid().ToString() : null;
 
-            List<InventoryOperation> inventoryOperations = new List<InventoryOperation>{
+            List<InventoryOperation> inventoryOperations = new List<InventoryOperation>
+            {
                 new InventoryOperation
                 {
                     Subtract = new SubtractInventoryItemsOperation
                     {
                         Amount = 1,
-                        Item = new InventoryItemReference{
-                            Id = coinItemId
-                        }
+                        Item = new InventoryItemReference { Id = coinItemId }
                     }
                 },
                 new InventoryOperation
                 {
-                    Add = new AddInventoryItemsOperation{
+                    Add = new AddInventoryItemsOperation
+                    {
                         Amount = item.amount,
-                        Item = new InventoryItemReference()
-                        {
-                            Id = itemId,
-                            StackId = stackId
-                        },
+                        Item = new InventoryItemReference() { Id = itemId, StackId = stackId },
                     }
                 }
             };
 
             await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
 
-            List<InventoryItem> inventoryItems = new List<InventoryItem> {
-                new InventoryItem() { Amount = item.amount, Id = itemId, StackId = stackId },
+            List<InventoryItem> inventoryItems = new List<InventoryItem>
+            {
+                new InventoryItem()
+                {
+                    Amount = item.amount,
+                    Id = itemId,
+                    StackId = stackId
+                },
                 new InventoryItem() { Amount = -1, Id = coinItemId }
             };
 

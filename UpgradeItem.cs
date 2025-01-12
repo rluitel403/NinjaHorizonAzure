@@ -26,7 +26,8 @@ namespace NinjaHorizon.Function
         [FunctionName("UpgradeItem")]
         public static async Task<dynamic> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
-            ILogger log)
+            ILogger log
+        )
         {
             var context = await PlayFabUtil.ParseFunctionContext(req);
             var playfabUtil = PlayFabUtil.InitializeFromContext(context);
@@ -35,9 +36,10 @@ namespace NinjaHorizon.Function
             var upgradeItemRequirementData = await playfabUtil.GetTitleData(
                 new List<string> { "upgradeItemRequirement" }
             );
-            Dictionary<int, UpgradeItemRequirement> upgradeItemRequirements = JsonConvert.DeserializeObject<Dictionary<int, UpgradeItemRequirement>>(
-                upgradeItemRequirementData.Data["upgradeItemRequirement"].ToString()
-            );
+            Dictionary<int, UpgradeItemRequirement> upgradeItemRequirements =
+                JsonConvert.DeserializeObject<Dictionary<int, UpgradeItemRequirement>>(
+                    upgradeItemRequirementData.Data["upgradeItemRequirement"].ToString()
+                );
 
             string itemId = args.itemId;
             string upgradeItemFilter = "stackId eq '" + itemId + "'";
@@ -50,12 +52,14 @@ namespace NinjaHorizon.Function
 
             var item = upgradeItem[0];
             Tier itemData = JsonConvert.DeserializeObject<Tier>(
-               item.DisplayProperties.ToString(),
-               new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+                item.DisplayProperties.ToString(),
+                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
             );
 
             //validate user has sufficient materials to upgrade item
-            UpgradeItemRequirement upgradeItemRequirement = upgradeItemRequirements[itemData.tier + 1];
+            UpgradeItemRequirement upgradeItemRequirement = upgradeItemRequirements[
+                itemData.tier + 1
+            ];
             string requiredItemFilter = "id eq '" + upgradeItemRequirement.requiredItemId + "'";
             var getRequiredItemResponse = await playfabUtil.GetInventoryItems(requiredItemFilter);
             var requiredItem = getRequiredItemResponse.Items;
@@ -82,20 +86,15 @@ namespace NinjaHorizon.Function
                 Amount = requiredItem[0].Amount - upgradeItemRequirement.amount
             };
 
-            List<InventoryOperation> inventoryOperations = new List<InventoryOperation>{
+            List<InventoryOperation> inventoryOperations = new List<InventoryOperation>
+            {
                 new InventoryOperation
                 {
-                    Update = new UpdateInventoryItemsOperation
-                    {
-                        Item = updateUpgradeItem
-                    }
+                    Update = new UpdateInventoryItemsOperation { Item = updateUpgradeItem }
                 },
                 new InventoryOperation
                 {
-                    Update = new UpdateInventoryItemsOperation
-                    {
-                        Item = updateMaterial
-                    }
+                    Update = new UpdateInventoryItemsOperation { Item = updateMaterial }
                 }
             };
 
@@ -111,4 +110,3 @@ namespace NinjaHorizon.Function
         }
     }
 }
-
