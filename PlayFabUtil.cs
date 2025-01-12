@@ -11,7 +11,7 @@ using EntityKey = PlayFab.EconomyModels.EntityKey;
 
 namespace NinjaHorizon.Function
 {
-     public class TitleAuthenticationContext
+    public class TitleAuthenticationContext
     {
         public string Id { get; set; }
         public string EntityToken { get; set; }
@@ -24,6 +24,7 @@ namespace NinjaHorizon.Function
         public bool? GeneratePlayStreamEvent { get; set; }
         public T FunctionArgument { get; set; }
     }
+
     public class PlayFabUtil
     {
         public PlayFabServerInstanceAPI ServerApi { get; private set; }
@@ -35,7 +36,8 @@ namespace NinjaHorizon.Function
             PlayFabServerInstanceAPI serverApi,
             PlayFabEconomyInstanceAPI economyApi,
             EntityKey entity,
-            string playFabId)
+            string playFabId
+        )
         {
             ServerApi = serverApi;
             EconomyApi = economyApi;
@@ -70,10 +72,14 @@ namespace NinjaHorizon.Function
             );
         }
 
-        public static async Task<FunctionExecutionContext<dynamic>> ParseFunctionContext(HttpRequest req)
+        public static async Task<FunctionExecutionContext<dynamic>> ParseFunctionContext(
+            HttpRequest req
+        )
         {
             string requestBody = await req.ReadAsStringAsync();
-            var context = JsonConvert.DeserializeObject<FunctionExecutionContext<dynamic>>(requestBody);
+            var context = JsonConvert.DeserializeObject<FunctionExecutionContext<dynamic>>(
+                requestBody
+            );
             return context;
         }
 
@@ -106,7 +112,9 @@ namespace NinjaHorizon.Function
             var result = await EconomyApi.ExecuteInventoryOperationsAsync(request);
             if (result.Error != null)
             {
-                throw new Exception($"Failed to execute inventory operations: {result.Error.ErrorMessage}");
+                throw new Exception(
+                    $"Failed to execute inventory operations: {result.Error.ErrorMessage}"
+                );
             }
         }
 
@@ -123,11 +131,7 @@ namespace NinjaHorizon.Function
 
         public async Task<GetUserDataResult> GetUserData(List<string> keys)
         {
-            var request = new GetUserDataRequest
-            {
-                PlayFabId = PlayFabId,
-                Keys = keys
-            };
+            var request = new GetUserDataRequest { PlayFabId = PlayFabId, Keys = keys };
             var result = await ServerApi.GetUserDataAsync(request);
             if (result.Error != null)
             {
@@ -138,11 +142,7 @@ namespace NinjaHorizon.Function
 
         public async Task UpdateUserData(Dictionary<string, string> data)
         {
-            var request = new UpdateUserDataRequest
-            {
-                PlayFabId = PlayFabId,
-                Data = data
-            };
+            var request = new UpdateUserDataRequest { PlayFabId = PlayFabId, Data = data };
             var result = await ServerApi.UpdateUserDataAsync(request);
             if (result.Error != null)
             {

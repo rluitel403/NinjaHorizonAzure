@@ -72,10 +72,7 @@ namespace NinjaHorizon.Function
             {
                 new InventoryOperation
                 {
-                    Update = new UpdateInventoryItemsOperation
-                    {
-                        Item = updateItem
-                    }
+                    Update = new UpdateInventoryItemsOperation { Item = updateItem }
                 }
             };
 
