@@ -129,7 +129,7 @@ namespace NinjaHorizon.Function
                 }
                 else
                 {
-                    string stackId = getStackIdFromType(todayReward.type);
+                    string stackId = PlayFabUtil.GetStackIdFromType(todayReward.type);
 
                     inventoryOperations.Add(
                         new InventoryOperation
@@ -158,7 +158,8 @@ namespace NinjaHorizon.Function
                         {
                             Id = todayReward.itemId,
                             StackId = stackId,
-                            Amount = todayReward.amount
+                            Amount = todayReward.amount,
+                            DisplayProperties = stackId != null ? new { todayReward.tier } : null
                         }
                     );
                 }
@@ -180,13 +181,6 @@ namespace NinjaHorizon.Function
             await playfabUtil.UpdateUserData(userDataToUpdate);
 
             return JsonConvert.SerializeObject(new { inventoryItems, dailyRewardProgress });
-        }
-
-        public static string getStackIdFromType(string type)
-        {
-            if (type == "Fodder" || type == "Entity")
-                return Guid.NewGuid().ToString();
-            return null;
         }
     }
 }

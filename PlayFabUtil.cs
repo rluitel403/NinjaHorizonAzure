@@ -140,6 +140,42 @@ namespace NinjaHorizon.Function
             return result.Result;
         }
 
+        public async Task<GetPlayerCombinedInfoResult> GetPlayerCombinedInfo(
+            List<string> titleDataKeys,
+            List<string> userDataKeys,
+            List<string> playerStatisticNames
+        )
+        {
+            var infoRequestParameters = new GetPlayerCombinedInfoRequestParams();
+
+            if (playerStatisticNames != null && playerStatisticNames.Count > 0)
+            {
+                infoRequestParameters.GetPlayerStatistics = true;
+                infoRequestParameters.PlayerStatisticNames = playerStatisticNames;
+            }
+
+            if (titleDataKeys != null && titleDataKeys.Count > 0)
+            {
+                infoRequestParameters.GetTitleData = true;
+                infoRequestParameters.TitleDataKeys = titleDataKeys;
+            }
+
+            if (userDataKeys != null && userDataKeys.Count > 0)
+            {
+                infoRequestParameters.GetUserData = true;
+                infoRequestParameters.UserDataKeys = userDataKeys;
+            }
+
+            var request = new GetPlayerCombinedInfoRequest
+            {
+                PlayFabId = PlayFabId,
+                InfoRequestParameters = infoRequestParameters
+            };
+
+            var result = await ServerApi.GetPlayerCombinedInfoAsync(request);
+            return result.Result;
+        }
+
         public async Task UpdateUserData(Dictionary<string, string> data)
         {
             var request = new UpdateUserDataRequest { PlayFabId = PlayFabId, Data = data };
@@ -148,6 +184,13 @@ namespace NinjaHorizon.Function
             {
                 throw new Exception($"Failed to update user data: {result.Error.ErrorMessage}");
             }
+        }
+
+        public static string GetStackIdFromType(string type)
+        {
+            if (type == "Entity" || type == "Weapon" || type == "BackItem" || type == "Clothing")
+                return Guid.NewGuid().ToString();
+            return null;
         }
     }
 }

@@ -369,12 +369,14 @@ namespace NinjaHorizon.Function
             }
             else
             {
-                float rewardScaler = 1 + (missionContext.FloorId / 18f);
+                float rewardScaler = missionContext.FloorId / 2;
+                float baseXp = 400;
+                float baseGold = 400;
                 grantedRewards = new Reward
                 {
                     extra = new List<Extra>(),
-                    xp = (int)(missionData.Rewards.xp * rewardScaler),
-                    gold = (int)(missionData.Rewards.gold * rewardScaler),
+                    xp = (int)(baseXp * rewardScaler),
+                    gold = (int)(baseGold * rewardScaler),
                     token = 0
                 };
                 difficultyChanceBoost = 30 + (missionContext.FloorId + 1) * 7;
