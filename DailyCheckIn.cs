@@ -48,17 +48,37 @@ namespace NinjaHorizon.Function
             string energyDataKey = "EnergyData";
             string dailyRewardsTitleDataKey = "dailyRewards";
 
+            DateTime today = DateTime.UtcNow;
+
             // Get user's data to check daily reward progress
             var userData = await playfabUtil.GetUserData(
                 new List<string> { dailyRewardProgressKey, energyDataKey }
             );
+
+            // Handle energy restoration first
+            EnergyData energyData;
+            if (userData.Data.ContainsKey(energyDataKey))
+            {
+                energyData = JsonConvert.DeserializeObject<EnergyData>(
+                    userData.Data[energyDataKey].Value
+                );
+                energyData = EnergySystem.RestoreEnergy(energyData, today);
+            }
+            else
+            {
+                energyData = new EnergyData()
+                {
+                    currentEnergy = 100,
+                    maxEnergy = 100,
+                    lastUpdatedTime = today.ToString("o")
+                };
+            }
 
             // Get title data for rewards configuration
             var titleData = await playfabUtil.GetTitleData(
                 new List<string> { dailyRewardsTitleDataKey }
             );
 
-            DateTime today = DateTime.UtcNow;
             bool isEligible = true;
             DailyRewardProgress dailyRewardProgress = new DailyRewardProgress()
             {
@@ -107,25 +127,8 @@ namespace NinjaHorizon.Function
                 var todayReward = dailyRewards[dailyRewardProgress.day];
                 if (todayReward.type == "Energy")
                 {
-                    EnergyData energyData;
-                    //energy dont have item id so we need to grant it differently
-                    if (userData.Data.ContainsKey(energyDataKey))
-                    {
-                        energyData = JsonConvert.DeserializeObject<EnergyData>(
-                            userData.Data[energyDataKey].Value
-                        );
-                        energyData.currentEnergy += todayReward.amount;
-                    }
-                    else
-                    {
-                        energyData = new EnergyData()
-                        {
-                            currentEnergy = 100 + todayReward.amount,
-                            maxEnergy = 100,
-                            lastUpdatedTime = today.ToString("o")
-                        };
-                    }
-                    userDataToUpdate[energyDataKey] = JsonConvert.SerializeObject(energyData);
+                    // No need to deserialize energy data again since we already have it
+                    energyData.currentEnergy += todayReward.amount;
                 }
                 else
                 {
@@ -174,13 +177,25 @@ namespace NinjaHorizon.Function
                 }
             }
 
+            // Always update energy data since we restored it
+            userDataToUpdate[energyDataKey] = JsonConvert.SerializeObject(energyData);
+
             dailyRewardProgress.lastLogin = today.ToString("o");
-            var dailyRewardProgressSerialized = JsonConvert.SerializeObject(dailyRewardProgress);
-            userDataToUpdate[dailyRewardProgressKey] = dailyRewardProgressSerialized;
-            // Update daily reward progress
+            userDataToUpdate[dailyRewardProgressKey] = JsonConvert.SerializeObject(
+                dailyRewardProgress
+            );
+
+            // Update user data
             await playfabUtil.UpdateUserData(userDataToUpdate);
 
-            return JsonConvert.SerializeObject(new { inventoryItems, dailyRewardProgress });
+            return JsonConvert.SerializeObject(
+                new
+                {
+                    inventoryItems,
+                    dailyRewardProgress,
+                    energyData
+                }
+            );
         }
     }
 }

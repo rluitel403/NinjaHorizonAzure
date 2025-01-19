@@ -130,6 +130,9 @@ namespace NinjaHorizon.Function
 
             await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
 
+            //update achievement if first time evolving
+
+
             return JsonConvert.SerializeObject(
                 new
                 {

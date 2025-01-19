@@ -85,6 +85,8 @@ namespace NinjaHorizon.Function
         public bool IsMissionOrTower { get; set; }
         public bool IsMission { get; set; }
         public bool IsTower { get; set; }
+
+        public bool IsHuntingHouse { get; set; }
         public string MissionGrade { get; set; }
         public int ScaledMissionId { get; set; }
         public int NumberOfMission { get; set; }
@@ -95,6 +97,7 @@ namespace NinjaHorizon.Function
             MissionId = args.missionId;
             Difficulty = args.difficulty;
             FloorId = args.floorId;
+            IsHuntingHouse = args.battleType == BattleType.PVE_HUTNING_HOUSE;
             IsMissionOrTower =
                 args.battleType == BattleType.PVE || args.battleType == BattleType.PVE_TOWER;
             IsMission = args.battleType == BattleType.PVE;
@@ -169,6 +172,9 @@ namespace NinjaHorizon.Function
 
             var missionContext = new MissionContext(args);
             var playerInfo = await GetPlayerInfo(playfabUtil, missionContext);
+            var resultData = new ResultData();
+
+            ValidateEnergy(playerInfo.UserData, resultData, missionContext);
 
             var missionData = ParseMissionData(playerInfo.TitleData["missions"], missionContext);
             missionContext.NumberOfMission = missionData.NumberOfMission;
@@ -179,12 +185,10 @@ namespace NinjaHorizon.Function
                 missionData,
                 playerInfo.MaxMissionId
             );
-            var resultData = new ResultData();
 
             UpdateProgress(missionContext, playerInfo, rewardContext, resultData);
             GrantRewards(
                 missionContext,
-                playerInfo,
                 missionData,
                 rewardContext,
                 playerInfo.Inventory,
@@ -198,7 +202,7 @@ namespace NinjaHorizon.Function
                     inventoryItems = resultData.InventoryItems,
                     statsUpdate = resultData.StatsUpdate,
                     userDataRecord = resultData.UserDataRecord,
-                    grantedRewards = rewardContext.GrantedRewards
+                    grantedRewards = rewardContext.GrantedRewards,
                 }
             );
         }
@@ -411,7 +415,7 @@ namespace NinjaHorizon.Function
                 {
                     UpdateTowerProgress(missionContext, resultData);
                 }
-                else
+                else if (missionContext.IsHuntingHouse)
                 {
                     UpdateHuntingHouseProgress(missionContext, playerInfo, resultData);
                 }
@@ -490,7 +494,6 @@ namespace NinjaHorizon.Function
 
         private static void GrantRewards(
             MissionContext missionContext,
-            PlayerInfo playerInfo,
             MissionData missionData,
             RewardContext rewardContext,
             List<InventoryItem> inventory,
@@ -499,21 +502,18 @@ namespace NinjaHorizon.Function
         {
             GrantPlayerXpAndGold(inventory, rewardContext.GrantedRewards, resultData);
             GrantExtraRewards(missionContext, missionData, rewardContext, resultData);
-            TryGrantEnergyReward(rewardContext, playerInfo, resultData);
+            TryGrantEnergyReward(rewardContext, resultData);
         }
 
-        private static void TryGrantEnergyReward(
-            RewardContext rewardContext,
-            PlayerInfo playerInfo,
-            ResultData resultData
-        )
+        private static void TryGrantEnergyReward(RewardContext rewardContext, ResultData resultData)
         {
             int randomNumber = new Random().Next(1, 101);
             int energyAmountToGrant = 1;
             if (randomNumber <= 30)
             {
-                EnergyData energyData = JsonConvert.DeserializeObject<EnergyData>(
-                    playerInfo.UserData.GetValueOrDefault("EnergyData").Value,
+                //energy data is in resultData.UserDataRecord since we used it before
+                var energyData = JsonConvert.DeserializeObject<EnergyData>(
+                    resultData.UserDataRecord["EnergyData"].Value,
                     new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
                 );
                 energyData.currentEnergy = energyData.currentEnergy + energyAmountToGrant;
@@ -773,6 +773,87 @@ namespace NinjaHorizon.Function
                     }
                     return maxFloorId;
                 }
+            }
+            return 0;
+        }
+
+        private static void ValidateEnergy(
+            Dictionary<string, UserDataRecord> userData,
+            ResultData resultData,
+            MissionContext missionContext
+        )
+        {
+            if (!userData.ContainsKey("EnergyData"))
+            {
+                throw new Exception("Energy data not found");
+            }
+
+            // 1. Get current energy data
+            var energyData = JsonConvert.DeserializeObject<EnergyData>(
+                userData["EnergyData"].Value,
+                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+            );
+
+            // 2. Calculate required energy first
+            int requiredEnergy = GetEnergyCost(missionContext);
+
+            // 3. Restore energy before checking requirements
+            energyData = EnergySystem.RestoreEnergy(energyData, DateTime.UtcNow);
+
+            // 4. Validate if we have enough energy after restoration
+            if (energyData.currentEnergy < requiredEnergy)
+            {
+                int minutesToWait =
+                    (requiredEnergy - energyData.currentEnergy)
+                    * EnergySystem.ENERGY_RESTORE_MINUTES;
+                throw new Exception(
+                    $"Insufficient energy. Required: {requiredEnergy}, Current: {energyData.currentEnergy}, Minutes until enough: {minutesToWait}"
+                );
+            }
+
+            // 5. Deduct energy cost and update timestamp
+            energyData.currentEnergy -= requiredEnergy;
+
+            // 6. Save updated energy data
+            resultData.UserDataRecord["EnergyData"] = new UserDataRecord
+            {
+                Value = JsonConvert.SerializeObject(energyData)
+            };
+        }
+
+        public static int GetEnergyCost(MissionContext missionContext)
+        {
+            if (missionContext.IsHuntingHouse)
+            {
+                if (missionContext.FloorId <= 2)
+                {
+                    return 5;
+                }
+                else if (missionContext.FloorId <= 5)
+                {
+                    return 6;
+                }
+                else if (missionContext.FloorId <= 7)
+                {
+                    return 7;
+                }
+                return 8;
+            }
+            else if (missionContext.IsMission)
+            {
+                if (missionContext.Difficulty == 0)
+                {
+                    return 3;
+                }
+                else if (missionContext.Difficulty == 1)
+                {
+                    return 4;
+                }
+                return 5;
+            }
+            else if (missionContext.IsTower)
+            {
+                return 5;
             }
             return 0;
         }
