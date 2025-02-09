@@ -564,36 +564,34 @@ namespace NinjaHorizon.Function
 
             if (grantedRewards.gold > 0)
             {
-                string goldId = "b4a8100a-73a4-47e5-85e1-23a56a66a313";
                 resultData.InventoryOperations.Add(
                     new InventoryOperation
                     {
                         Add = new AddInventoryItemsOperation
                         {
-                            Item = new InventoryItemReference { Id = goldId },
+                            Item = new InventoryItemReference { Id = InventoryUtil.GOLD_ID },
                             Amount = grantedRewards.gold
                         }
                     }
                 );
                 resultData.InventoryItems.Add(
-                    new InventoryItem { Id = goldId, Amount = grantedRewards.gold }
+                    new InventoryItem { Id = InventoryUtil.GOLD_ID, Amount = grantedRewards.gold }
                 );
             }
             if (grantedRewards.token > 0)
             {
-                string tokenId = "349f39f1-fc39-424b-a44f-ddfdf39a171c";
                 resultData.InventoryOperations.Add(
                     new InventoryOperation
                     {
                         Add = new AddInventoryItemsOperation
                         {
-                            Item = new InventoryItemReference { Id = tokenId },
+                            Item = new InventoryItemReference { Id = InventoryUtil.TOKEN_ID },
                             Amount = grantedRewards.token
                         }
                     }
                 );
                 resultData.InventoryItems.Add(
-                    new InventoryItem { Id = tokenId, Amount = grantedRewards.token }
+                    new InventoryItem { Id = InventoryUtil.TOKEN_ID, Amount = grantedRewards.token }
                 );
             }
         }

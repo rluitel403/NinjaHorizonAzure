@@ -10,17 +10,6 @@ using PlayFab.EconomyModels;
 
 namespace NinjaHorizon.Function
 {
-    public class UpgradeItemRequirement
-    {
-        public string requiredItemId;
-        public int amount;
-    }
-
-    public class Tier
-    {
-        public int tier { get; set; }
-    }
-
     public static class UpgradeItem
     {
         [FunctionName("UpgradeItem")]
@@ -33,13 +22,7 @@ namespace NinjaHorizon.Function
             var playfabUtil = PlayFabUtil.InitializeFromContext(context);
             var args = context.FunctionArgument;
 
-            var upgradeItemRequirementData = await playfabUtil.GetTitleData(
-                new List<string> { "upgradeItemRequirement" }
-            );
-            Dictionary<int, UpgradeItemRequirement> upgradeItemRequirements =
-                JsonConvert.DeserializeObject<Dictionary<int, UpgradeItemRequirement>>(
-                    upgradeItemRequirementData.Data["upgradeItemRequirement"].ToString()
-                );
+            var upgradeCosts = await InventoryUtil.GetUpgradeCosts(playfabUtil);
 
             string itemId = args.itemId;
             string upgradeItemFilter = "stackId eq '" + itemId + "'";
@@ -57,17 +40,42 @@ namespace NinjaHorizon.Function
             );
 
             //validate user has sufficient materials to upgrade item
-            UpgradeItemRequirement upgradeItemRequirement = upgradeItemRequirements[
-                itemData.tier + 1
-            ];
-            string requiredItemFilter = "id eq '" + upgradeItemRequirement.requiredItemId + "'";
+            TierRequirement costItems = upgradeCosts.itemUpgradeCost.Find(x =>
+                x.tier == itemData.tier
+            );
+
+            CostItem materialCostItem = costItems.requirements.Find(x =>
+                !InventoryUtil.IsGoldOrToken(x.itemId)
+            );
+            CostItem goldOrTokenCostItem = costItems.requirements.Find(x =>
+                InventoryUtil.IsGoldOrToken(x.itemId)
+            );
+
+            string requiredItemFilter =
+                "id eq '"
+                + materialCostItem.itemId
+                + "'"
+                + " or id eq '"
+                + goldOrTokenCostItem.itemId
+                + "'";
+
             var getRequiredItemResponse = await playfabUtil.GetInventoryItems(requiredItemFilter);
             var requiredItem = getRequiredItemResponse.Items;
-            if (requiredItem.Count != 1)
+            if (requiredItem.Count != 2)
             {
                 throw new Exception("User does not have the required item");
             }
-            if (requiredItem[0].Amount < upgradeItemRequirement.amount)
+            InventoryItem materialItem = requiredItem.Find(item =>
+                item.Id == materialCostItem.itemId
+            );
+            InventoryItem currencyItem = requiredItem.Find(item =>
+                item.Id == goldOrTokenCostItem.itemId
+            );
+
+            if (
+                materialItem.Amount < materialCostItem.amount
+                || currencyItem.Amount < goldOrTokenCostItem.amount
+            )
             {
                 throw new Exception("Insufficient amount of item for upgrade");
             }
@@ -82,8 +90,14 @@ namespace NinjaHorizon.Function
             };
             var updateMaterial = new InventoryItem()
             {
-                Id = upgradeItemRequirement.requiredItemId,
-                Amount = requiredItem[0].Amount - upgradeItemRequirement.amount
+                Id = materialCostItem.itemId,
+                Amount = materialItem.Amount - materialCostItem.amount
+            };
+
+            var updateCurrency = new InventoryItem()
+            {
+                Id = goldOrTokenCostItem.itemId,
+                Amount = currencyItem.Amount - goldOrTokenCostItem.amount
             };
 
             List<InventoryOperation> inventoryOperations = new List<InventoryOperation>
@@ -95,16 +109,26 @@ namespace NinjaHorizon.Function
                 new InventoryOperation
                 {
                     Update = new UpdateInventoryItemsOperation { Item = updateMaterial }
+                },
+                new InventoryOperation
+                {
+                    Update = new UpdateInventoryItemsOperation { Item = updateCurrency }
                 }
             };
 
             await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
-            updateMaterial.Amount = -upgradeItemRequirement.amount; //ui adds values for currency/materials so we negate for materials. for items, it updates.
+            updateMaterial.Amount = -materialCostItem.amount; //ui adds values for currency/materials so we negate for materials. for items, it updates.
+            updateCurrency.Amount = -goldOrTokenCostItem.amount;
 
             return JsonConvert.SerializeObject(
                 new
                 {
-                    inventoryItems = new List<InventoryItem>() { updateMaterial, updateUpgradeItem }
+                    inventoryItems = new List<InventoryItem>()
+                    {
+                        updateMaterial,
+                        updateCurrency,
+                        updateUpgradeItem
+                    }
                 }
             );
         }

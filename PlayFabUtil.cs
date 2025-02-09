@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.WebJobs.Extensions.Http;
@@ -98,6 +99,31 @@ namespace NinjaHorizon.Function
                 throw new Exception($"Failed to get inventory items: {result.Error.ErrorMessage}");
             }
             return result.Result;
+        }
+
+        public async Task<List<InventoryItem>> GetCurrencyItems(List<string> currencyIds)
+        {
+            var filter = string.Join(" or ", currencyIds.Select(id => $"id eq '{id}'"));
+            var inventoryItems = await GetInventoryItems(filter);
+            return inventoryItems.Items;
+        }
+
+        public async Task<InventoryItem> GetCurrencyItem(
+            string currencyId,
+            int? expectedAmount = null
+        )
+        {
+            var inventoryItems = await GetCurrencyItems(new List<string> { currencyId });
+            if (inventoryItems.Count != 1)
+            {
+                throw new Exception("User does not have the required item");
+            }
+            var inventoryItem = inventoryItems[0];
+            if (expectedAmount != null && inventoryItem.Amount < expectedAmount)
+            {
+                throw new Exception("User does not have the required amount");
+            }
+            return inventoryItem;
         }
 
         public async Task ExecuteInventoryOperations(List<InventoryOperation> operations)

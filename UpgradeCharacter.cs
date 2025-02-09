@@ -50,6 +50,23 @@ namespace NinjaHorizon.Function
             EntityData characterToEvolveData = JsonConvert.DeserializeObject<EntityData>(
                 characterToEvolveItem.DisplayProperties.ToString()
             );
+
+            var upgradeCosts = await InventoryUtil.GetUpgradeCosts(playfabUtil);
+
+            TierRequirement costItems = upgradeCosts.characterUpgradeCost.Find(x =>
+                x.tier == characterToEvolveData.tier
+            );
+
+            CostItem goldOrTokenCostItem = costItems.requirements.Find(x =>
+                InventoryUtil.IsGoldOrToken(x.itemId)
+            );
+
+            //validate sufficient currency
+            var ownedCurrencyItem = await playfabUtil.GetCurrencyItem(
+                goldOrTokenCostItem.itemId,
+                goldOrTokenCostItem.amount
+            );
+
             List<InventoryItemReference> charactersToDeleteItem =
                 new List<InventoryItemReference>();
 
@@ -97,12 +114,18 @@ namespace NinjaHorizon.Function
             }
 
             characterToEvolveData.tier = characterToEvolveData.tier + 1;
-            InventoryItem characterToEvolveUpdated = new InventoryItem()
+            InventoryItem updateCharacterToEvolve = new InventoryItem()
             {
                 Id = characterToEvolveItem.Id,
                 StackId = characterToEvolveItem.StackId,
                 DisplayProperties = characterToEvolveData,
                 Amount = 1
+            };
+
+            InventoryItem updateCurrency = new InventoryItem()
+            {
+                Id = goldOrTokenCostItem.itemId,
+                Amount = ownedCurrencyItem.Amount - goldOrTokenCostItem.amount
             };
 
             //change evolve character tier to tier + 1
@@ -111,7 +134,11 @@ namespace NinjaHorizon.Function
             {
                 new InventoryOperation()
                 {
-                    Update = new UpdateInventoryItemsOperation() { Item = characterToEvolveUpdated }
+                    Update = new UpdateInventoryItemsOperation() { Item = updateCharacterToEvolve }
+                },
+                new InventoryOperation()
+                {
+                    Update = new UpdateInventoryItemsOperation() { Item = updateCurrency }
                 }
             };
 
@@ -129,14 +156,17 @@ namespace NinjaHorizon.Function
             }
 
             await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
+            updateCurrency.Amount = -goldOrTokenCostItem.amount;
 
             //update achievement if first time evolving
-
-
             return JsonConvert.SerializeObject(
                 new
                 {
-                    inventoryItemsToAdd = new List<InventoryItem>() { characterToEvolveUpdated },
+                    inventoryItemsToAdd = new List<InventoryItem>()
+                    {
+                        updateCharacterToEvolve,
+                        updateCurrency
+                    },
                     inventoryItemsToDelete = charactersToDeleteItem
                 }
             );
