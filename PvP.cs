@@ -27,7 +27,6 @@ namespace NinjaHorizon.Function
         public string sourceStackId { get; set; } //entity who performs the action
         public string targetStackId { get; set; } //entity who is the target of the action
         public int abilityIndex { get; set; } //index of the ability in the entity's ability list
-        public float damage { get; set; } //damage dealt
     }
 
 
@@ -72,53 +71,49 @@ namespace NinjaHorizon.Function
         public static void GetPlayerEquippedItems() { }
 
         private static async Task<dynamic> CreateSharedGroupAsync(
-            PlayFabServerInstanceAPI serverApi,
-            PlayFabMultiplayerInstanceAPI multiplayerApi,
-            string matchId,
-            string entityId)
+            PlayFabUtil playFabUtil,
+            string matchId)
         {
-            var createSharedGroupRequest = new CreateSharedGroupRequest
+            var getMatchResult = await playFabUtil.MultiplayerApi.GetMatchAsync(
+               new PlayFab.MultiplayerModels.GetMatchRequest
+               {
+                   QueueName = "PvP",
+                   MatchId = matchId
+               }
+           );
+
+            string entityId1 = getMatchResult.Result.Members[0].Entity.Id;
+            string entityId2 = getMatchResult.Result.Members[1].Entity.Id;
+            string currentPlayerEntityId = playFabUtil.Entity.Id;
+            string creatorEntityId = string.CompareOrdinal(entityId1, entityId2) < 0 ? entityId1 : entityId2;
+            if (creatorEntityId != currentPlayerEntityId)
             {
-                SharedGroupId = matchId
-            };
-
-            PlayFabResult<CreateSharedGroupResult> createSharedGroupResult =
-                await serverApi.CreateSharedGroupAsync(createSharedGroupRequest);
-
-            var getMatchResult = await multiplayerApi.GetMatchAsync(
-                new PlayFab.MultiplayerModels.GetMatchRequest
-                {
-                    QueueName = "PvP",
-                    MatchId = matchId
-                }
-            );
+                return new { };
+            }
 
             int randomNumber = new Random().Next(0, 2);
             string myEntityId = getMatchResult.Result.Members[randomNumber].Entity.Id;
             string enemyEntityId = getMatchResult.Result.Members[(randomNumber + 1) % 2].Entity.Id;
-            var updateSharedGroupDataRequest = new UpdateSharedGroupDataRequest
+            var data = new Dictionary<string, string>
             {
-                SharedGroupId = matchId,
-                Data = new Dictionary<string, string>
                 {
-                    {
-                        myEntityId,
-                        JsonConvert.SerializeObject(new PlayerSharedGroupData() { myTurn = true, myEntityId = myEntityId, enemyEntityId = enemyEntityId })
-                    },
-                    {
-                        enemyEntityId,
-                        JsonConvert.SerializeObject(new PlayerSharedGroupData() { myTurn = false, myEntityId = enemyEntityId, enemyEntityId = myEntityId })
-                    }
+                    myEntityId,
+                    JsonConvert.SerializeObject(new PlayerSharedGroupData() { myTurn = true, myEntityId = myEntityId, enemyEntityId = enemyEntityId })
+                },
+                {
+                    enemyEntityId,
+                    JsonConvert.SerializeObject(new PlayerSharedGroupData() { myTurn = false, myEntityId = enemyEntityId, enemyEntityId = myEntityId })
                 }
             };
 
-            await serverApi.UpdateSharedGroupDataAsync(updateSharedGroupDataRequest);
+            await playFabUtil.CreateSharedGroup(matchId);
+            await playFabUtil.UpdateSharedGroupData(matchId, data);
+
             return new { };
         }
 
         private static async Task<dynamic> SelectCharacterAsync(
-            PlayFabServerInstanceAPI serverApi,
-            PlayFabEconomyInstanceAPI economyApi,
+            PlayFabUtil playFabUtil,
             FunctionExecutionContext<dynamic> context,
             string matchId,
             string entityId)
@@ -128,22 +123,17 @@ namespace NinjaHorizon.Function
                     context.FunctionArgument.pvpSelectCharacterInput.ToString()
                 );
 
-            var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-            {
-                SharedGroupId = matchId,
-            };
-
-            PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
+            GetSharedGroupDataResult getSharedGroupDataResult =
+                await playFabUtil.GetSharedGroupData(matchId);
 
             PlayerSharedGroupData mySharedGroupInput =
                 JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                    getSharedGroupDataResult.Result.Data[entityId].Value
+                    getSharedGroupDataResult.Data[entityId].Value
                 );
             string enemyEntityId = mySharedGroupInput.enemyEntityId;
             PlayerSharedGroupData enemySharedGroupInput =
                 JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                    getSharedGroupDataResult.Result.Data[enemyEntityId].Value
+                    getSharedGroupDataResult.Data[enemyEntityId].Value
                 );
             enemySharedGroupInput.myTurn = true;
             mySharedGroupInput.myTurn = false;
@@ -153,7 +143,7 @@ namespace NinjaHorizon.Function
             }
 
             // Get selected character data
-            await PopulateCharacterDataAsync(economyApi, context, pvpInput.selectedCharacter);
+            await PopulateCharacterDataAsync(playFabUtil, pvpInput.selectedCharacter);
 
             mySharedGroupInput.selectedCharacters.Add(pvpInput.selectedCharacter);
 
@@ -165,44 +155,25 @@ namespace NinjaHorizon.Function
             }
 
             int seed = new Random().Next();
-            var updateSharedGroupDataRequest = new UpdateSharedGroupDataRequest
+            var data = new Dictionary<string, string>
             {
-                SharedGroupId = matchId,
-                Data = new Dictionary<string, string>
-                {
-                    { entityId, JsonConvert.SerializeObject(mySharedGroupInput) },
-                    { enemyEntityId, JsonConvert.SerializeObject(enemySharedGroupInput) },
-                    { "seed", seed.ToString() }
-                }
+                { entityId, JsonConvert.SerializeObject(mySharedGroupInput) },
+                { enemyEntityId, JsonConvert.SerializeObject(enemySharedGroupInput) },
+                { "seed", seed.ToString() }
             };
 
-            await serverApi.UpdateSharedGroupDataAsync(updateSharedGroupDataRequest);
+            await playFabUtil.UpdateSharedGroupData(matchId, data);
             return new { };
         }
 
         private static async Task PopulateCharacterDataAsync(
-            PlayFabEconomyInstanceAPI economyApi,
-            FunctionExecutionContext<dynamic> context,
+            PlayFabUtil playFabUtil,
             PvPCharacterInfo character)
         {
-            GetInventoryItemsRequest getSelectCharacterInventoryRequest =
-                new GetInventoryItemsRequest()
-                {
-                    Entity = new PlayFab.EconomyModels.EntityKey()
-                    {
-                        Id = context.CallerEntityProfile.Entity.Id,
-                        Type = context.CallerEntityProfile.Entity.Type,
-                    },
-                    CollectionId = "default",
-                    Filter = "stackId eq '" + character.stackId + "'"
-                };
-
-            var selectCharacterInventory = await economyApi.GetInventoryItemsAsync(
-                getSelectCharacterInventoryRequest
-            );
+            var selectCharacterInventory = await playFabUtil.GetInventoryItems("stackId eq '" + character.stackId + "'");
 
             EntityData entityData = JsonConvert.DeserializeObject<EntityData>(
-                selectCharacterInventory.Result.Items[0].DisplayProperties.ToString(),
+                selectCharacterInventory.Items[0].DisplayProperties.ToString(),
                 new JsonSerializerSettings
                 {
                     NullValueHandling = NullValueHandling.Ignore,
@@ -217,7 +188,7 @@ namespace NinjaHorizon.Function
 
             if (!string.IsNullOrEmpty(itemFilter))
             {
-                itemsTier = await GetEquippedItemsDataAsync(economyApi, context, itemFilter);
+                itemsTier = await GetEquippedItemsDataAsync(playFabUtil, itemFilter);
             }
 
             character.itemIdAndTier = itemsTier;
@@ -242,26 +213,14 @@ namespace NinjaHorizon.Function
         }
 
         private static async Task<Dictionary<string, PvPItemIdAndTier>> GetEquippedItemsDataAsync(
-            PlayFabEconomyInstanceAPI economyApi,
-            FunctionExecutionContext<dynamic> context,
+            PlayFabUtil playFabUtil,
             string itemFilter)
         {
-            GetInventoryItemsRequest getEquippedItemsRequest = new GetInventoryItemsRequest()
-            {
-                Entity = new PlayFab.EconomyModels.EntityKey()
-                {
-                    Id = context.CallerEntityProfile.Entity.Id,
-                    Type = context.CallerEntityProfile.Entity.Type,
-                },
-                CollectionId = "default",
-                Filter = itemFilter
-            };
-
-            PlayFabResult<GetInventoryItemsResponse> equippedItems =
-                await economyApi.GetInventoryItemsAsync(getEquippedItemsRequest);
+            GetInventoryItemsResponse equippedItems =
+                await playFabUtil.GetInventoryItems(itemFilter);
 
             Dictionary<string, PvPItemIdAndTier> itemIdAndTier = new Dictionary<string, PvPItemIdAndTier>();
-            foreach (InventoryItem item in equippedItems.Result.Items)
+            foreach (InventoryItem item in equippedItems.Items)
             {
                 Tier itemData = JsonConvert.DeserializeObject<Tier>(item.DisplayProperties.ToString());
                 itemIdAndTier.Add(item.StackId, new PvPItemIdAndTier() { itemId = item.Id, tier = itemData });
@@ -298,62 +257,57 @@ namespace NinjaHorizon.Function
         }
 
         private static async Task<dynamic> GetSharedGroupDataAsync(
-            PlayFabServerInstanceAPI serverApi,
-            string matchId,
-            string entityId)
+            PlayFabUtil playFabUtil,
+            string matchId)
         {
-            var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-            {
-                SharedGroupId = matchId,
-            };
+            GetSharedGroupDataResult getSharedGroupDataResult =
+                await playFabUtil.GetSharedGroupData(matchId);
 
-            PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
-
-            return JsonConvert.SerializeObject(getSharedGroupDataResult.Result.Data);
+            return JsonConvert.SerializeObject(getSharedGroupDataResult.Data);
         }
 
-        private static string CheckWinCondition(Dictionary<string, SharedGroupDataRecord> sharedData, string entityId)
+        private static bool PlayerHasWon(UpdateTurnDataInput turnData)
         {
             try
             {
-                PlayerSharedGroupData playerData = JsonConvert.DeserializeObject<PlayerSharedGroupData>(sharedData[entityId].Value);
-                PlayerSharedGroupData player1Data = JsonConvert.DeserializeObject<PlayerSharedGroupData>(sharedData[playerData.myEntityId].Value);
-                PlayerSharedGroupData player2Data = JsonConvert.DeserializeObject<PlayerSharedGroupData>(sharedData[playerData.enemyEntityId].Value);
+                List<string> myCharacters = turnData.playerData.selectedCharacters.Select(c => c.stackId).ToList();
+                List<string> enemyCharacters = turnData.enemyData.selectedCharacters.Select(c => c.stackId).ToList();
 
                 // Count alive characters for each player
-                int player1AliveCount = player1Data.selectedCharacters?.Count ?? 0;
-                int player2AliveCount = player2Data.selectedCharacters?.Count ?? 0;
+                int player1AliveCount = myCharacters.Count;
+                int player2AliveCount = enemyCharacters.Count;
 
                 // Check win conditions
                 if (player1AliveCount == 0 && player2AliveCount == 0)
                 {
                     // Draw - both players have no alive characters
-                    return null;
+                    return false;
                 }
                 else if (player1AliveCount == 0)
                 {
                     // Player 2 wins
-                    return player2Data.myEntityId;
+                    return false;
                 }
                 else if (player2AliveCount == 0)
                 {
                     // Player 1 wins
-                    return player1Data.myEntityId;
+                    return true; //implies i won
                 }
 
                 // No winner yet
-                return null;
+                return false;
             }
             catch
             {
                 // If there's any error parsing data, assume no winner
-                return null;
+                return false;
             }
         }
 
+
+
         private static async Task<dynamic> UpdateTurnDataAsync(
-            PlayFabServerInstanceAPI serverApi,
+            PlayFabUtil playFabUtil,
             FunctionExecutionContext<dynamic> context,
             string matchId,
             string entityId)
@@ -362,42 +316,40 @@ namespace NinjaHorizon.Function
                 context.FunctionArgument.turnData.ToString()
             );
 
-            var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-            {
-                SharedGroupId = matchId,
-            };
-
-            PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
+            GetSharedGroupDataResult getSharedGroupDataResult =
+                await playFabUtil.GetSharedGroupData(matchId);
 
             PlayerSharedGroupData mySharedGroup =
                 JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                    getSharedGroupDataResult.Result.Data[entityId].Value
+                    getSharedGroupDataResult.Data[entityId].Value
                 );
             string enemyEntityId = mySharedGroup.enemyEntityId;
             PlayerSharedGroupData enemySharedGroup =
                 JsonConvert.DeserializeObject<PlayerSharedGroupData>(
-                    getSharedGroupDataResult.Result.Data[enemyEntityId].Value
+                    getSharedGroupDataResult.Data[enemyEntityId].Value
                 );
 
             // If replay was played, assign turn to the other player
             if (turnData.battleReplayData.played)
             {
+                //we pass in stale data, because enemy has yet to replay this information with stale data.
                 ProcessTurnSwitch(mySharedGroup, enemySharedGroup, turnData);
             }
+            // Check for winner, use updated data passed in my player because it is correct for determining the winner after player wins.
+            if (PlayerHasWon(turnData))
+            {
+                await playFabUtil.UpdatePlayerStatistics(new Dictionary<string, int> { { "pvp", 1 } });
+            }
 
-            await serverApi.UpdateSharedGroupDataAsync(
-                new UpdateSharedGroupDataRequest
-                {
-                    SharedGroupId = matchId,
-                    Data = new Dictionary<string, string>
-                    {
-                        { entityId, JsonConvert.SerializeObject(mySharedGroup) },
-                        { enemyEntityId, JsonConvert.SerializeObject(enemySharedGroup) },
-                        { "BattleReplayData", JsonConvert.SerializeObject(turnData.battleReplayData) }
-                    }
-                }
-            );
+            //we pass in stale data, because enemy has yet to replay this information with stale data.
+            var data = new Dictionary<string, string>
+            {
+                { entityId, JsonConvert.SerializeObject(mySharedGroup) },
+                { enemyEntityId, JsonConvert.SerializeObject(enemySharedGroup) },
+                { "BattleReplayData", JsonConvert.SerializeObject(turnData.battleReplayData) }
+            };
+
+            await playFabUtil.UpdateSharedGroupData(matchId, data);
 
             return new { };
         }
@@ -539,19 +491,13 @@ namespace NinjaHorizon.Function
         }
 
         private static async Task<dynamic> GetTurnDataAsync(
-            PlayFabServerInstanceAPI serverApi,
-            string matchId,
-            string entityId)
+            PlayFabUtil playFabUtil,
+            string matchId)
         {
-            var getSharedGroupDataRequest = new GetSharedGroupDataRequest
-            {
-                SharedGroupId = matchId,
-            };
+            GetSharedGroupDataResult getSharedGroupDataResult =
+                await playFabUtil.GetSharedGroupData(matchId);
 
-            PlayFabResult<GetSharedGroupDataResult> getSharedGroupDataResult =
-                await serverApi.GetSharedGroupDataAsync(getSharedGroupDataRequest);
-
-            return JsonConvert.SerializeObject(getSharedGroupDataResult.Result.Data);
+            return JsonConvert.SerializeObject(getSharedGroupDataResult.Data);
         }
 
         [FunctionName("PvP")]
@@ -561,42 +507,28 @@ namespace NinjaHorizon.Function
         )
         {
             var context = await PlayFabUtil.ParseFunctionContext(req);
+            var playFabUtil = PlayFabUtil.InitializeFromContext(context);
 
-            var apiSettings = new PlayFabApiSettings()
-            {
-                TitleId = context.TitleAuthenticationContext.Id,
-                DeveloperSecretKey = Environment.GetEnvironmentVariable("DeveloperSecretKey"),
-            };
-
-            PlayFabAuthenticationContext titleContext = new PlayFabAuthenticationContext
-            {
-                EntityToken = context.TitleAuthenticationContext.EntityToken
-            };
-
-            var serverApi = new PlayFabServerInstanceAPI(apiSettings, titleContext);
-            var economyApi = new PlayFabEconomyInstanceAPI(apiSettings, titleContext);
-            var multiplayerApi = new PlayFabMultiplayerInstanceAPI(apiSettings, titleContext);
-
-            string entityId = context.CallerEntityProfile.Entity.Id;
+            string entityId = playFabUtil.Entity.Id;
             string actionType = context.FunctionArgument.actionType;
             string matchId = context.FunctionArgument.matchId;
 
             switch (actionType)
             {
                 case "CreateSharedGroup":
-                    return await CreateSharedGroupAsync(serverApi, multiplayerApi, matchId, entityId);
+                    return await CreateSharedGroupAsync(playFabUtil, matchId);
 
                 case "SelectCharacter":
-                    return await SelectCharacterAsync(serverApi, economyApi, context, matchId, entityId);
+                    return await SelectCharacterAsync(playFabUtil, context, matchId, entityId);
 
                 case "GetSharedGroupData":
-                    return await GetSharedGroupDataAsync(serverApi, matchId, entityId);
+                    return await GetSharedGroupDataAsync(playFabUtil, matchId);
 
                 case "UpdateTurnData":
-                    return await UpdateTurnDataAsync(serverApi, context, matchId, entityId);
+                    return await UpdateTurnDataAsync(playFabUtil, context, matchId, entityId);
 
                 case "GetTurnData":
-                    return await GetTurnDataAsync(serverApi, matchId, entityId);
+                    return await GetTurnDataAsync(playFabUtil, matchId);
             }
 
             return new { };

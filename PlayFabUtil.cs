@@ -30,18 +30,24 @@ namespace NinjaHorizon.Function
     {
         public PlayFabServerInstanceAPI ServerApi { get; private set; }
         public PlayFabEconomyInstanceAPI EconomyApi { get; private set; }
+        public PlayFabMultiplayerInstanceAPI MultiplayerApi { get; private set; }
+        public PlayFabProgressionInstanceAPI ProgressionApi { get; private set; }
         public EntityKey Entity { get; private set; }
         public string PlayFabId { get; private set; }
 
         private PlayFabUtil(
             PlayFabServerInstanceAPI serverApi,
             PlayFabEconomyInstanceAPI economyApi,
+            PlayFabMultiplayerInstanceAPI multiplayerApi,
+            PlayFabProgressionInstanceAPI progressionApi,
             EntityKey entity,
             string playFabId
         )
         {
             ServerApi = serverApi;
             EconomyApi = economyApi;
+            MultiplayerApi = multiplayerApi;
+            ProgressionApi = progressionApi;
             Entity = entity;
             PlayFabId = playFabId;
         }
@@ -68,6 +74,8 @@ namespace NinjaHorizon.Function
             return new PlayFabUtil(
                 new PlayFabServerInstanceAPI(apiSettings, titleContext),
                 new PlayFabEconomyInstanceAPI(apiSettings, titleContext),
+                new PlayFabMultiplayerInstanceAPI(apiSettings, titleContext),
+                new PlayFabProgressionInstanceAPI(apiSettings, titleContext),
                 entity,
                 context.CallerEntityProfile.Lineage.MasterPlayerAccountId
             );
@@ -210,6 +218,67 @@ namespace NinjaHorizon.Function
             {
                 throw new Exception($"Failed to update user data: {result.Error.ErrorMessage}");
             }
+        }
+
+        public async Task UpdatePlayerStatistics(Dictionary<string, int> statistics)
+        {
+            var statisticUpdates = statistics.Select(stat => new StatisticUpdate
+            {
+                StatisticName = stat.Key,
+                Value = stat.Value
+            }).ToList();
+
+            var request = new UpdatePlayerStatisticsRequest
+            {
+                PlayFabId = PlayFabId,
+                Statistics = statisticUpdates
+            };
+            var result = await ServerApi.UpdatePlayerStatisticsAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to update player statistics: {result.Error.ErrorMessage}");
+            }
+        }
+
+        public async Task CreateSharedGroup(string sharedGroupId)
+        {
+            var request = new CreateSharedGroupRequest
+            {
+                SharedGroupId = sharedGroupId
+            };
+
+            await ServerApi.CreateSharedGroupAsync(request);
+        }
+
+        public async Task<GetSharedGroupDataResult> GetSharedGroupData(string sharedGroupId)
+        {
+            var request = new GetSharedGroupDataRequest
+            {
+                SharedGroupId = sharedGroupId
+            };
+
+            var result = await ServerApi.GetSharedGroupDataAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to get shared group data: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<UpdateSharedGroupDataResult> UpdateSharedGroupData(string sharedGroupId, Dictionary<string, string> data)
+        {
+            var request = new UpdateSharedGroupDataRequest
+            {
+                SharedGroupId = sharedGroupId,
+                Data = data
+            };
+
+            var result = await ServerApi.UpdateSharedGroupDataAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to update shared group data: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
         }
 
         public static string GetStackIdFromType(string type)

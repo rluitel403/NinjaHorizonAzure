@@ -28,7 +28,7 @@ namespace NinjaHorizon.Function
             var playfabUtil = PlayFabUtil.InitializeFromContext(context);
             UpgradeCharacterInput upgradeCharacterInput =
                 JsonConvert.DeserializeObject<UpgradeCharacterInput>(
-                    JsonConvert.SerializeObject(context.FunctionArgument)
+                    context.FunctionArgument.ToString()
                 );
 
             //validate user has all characters

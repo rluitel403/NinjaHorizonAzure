@@ -5,7 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Sdk.Functions" Version="4.2.0" />
-    <PackageReference Include="PlayFabAllSDK" Version="1.175.240202" />
+    <PackageReference Include="PlayFabAllSDK" Version="1.198.250328" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">
