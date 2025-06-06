@@ -152,6 +152,29 @@ namespace NinjaHorizon.Function
             }
         }
 
+        public async Task<SearchItemsResponse> SearchItems(string search = "", string filter = "", int count = 50, string continuationToken = null)
+        {
+            var request = new SearchItemsRequest
+            {
+                Entity = Entity,
+                Search = search,
+                Filter = filter,
+                Count = count
+            };
+
+            if (!string.IsNullOrEmpty(continuationToken))
+            {
+                request.ContinuationToken = continuationToken;
+            }
+
+            var result = await EconomyApi.SearchItemsAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to search items: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
         public async Task<GetTitleDataResult> GetTitleData(List<string> keys)
         {
             var request = new GetTitleDataRequest { Keys = keys };

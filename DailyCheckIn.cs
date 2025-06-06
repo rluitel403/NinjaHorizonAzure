@@ -36,6 +36,7 @@ namespace NinjaHorizon.Function
 
     public static class DailyCheckIn
     {
+
         [FunctionName("DailyCheckIn")]
         public static async Task<dynamic> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
@@ -101,7 +102,6 @@ namespace NinjaHorizon.Function
             Dictionary<string, string> userDataToUpdate = new Dictionary<string, string>();
             List<InventoryOperation> inventoryOperations = new List<InventoryOperation>();
             List<InventoryItem> inventoryItems = new List<InventoryItem>();
-            string coinItemId = "bf180bae-b805-43c9-99db-e2e8fc1a0719";
 
             if (isEligible)
             {
@@ -113,12 +113,12 @@ namespace NinjaHorizon.Function
                     {
                         Add = new AddInventoryItemsOperation
                         {
-                            Item = new InventoryItemReference { Id = coinItemId },
+                            Item = new InventoryItemReference { Id = InventoryUtil.COIN_ID },
                             Amount = 1
                         }
                     }
                 );
-                inventoryItems.Add(new InventoryItem { Id = coinItemId, Amount = 1 });
+                inventoryItems.Add(new InventoryItem { Id = InventoryUtil.COIN_ID, Amount = 1 });
 
                 // Get and grant daily reward
                 var dailyRewards = JsonConvert.DeserializeObject<List<DailyRewardItem>>(

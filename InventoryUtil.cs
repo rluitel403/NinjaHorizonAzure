@@ -34,6 +34,8 @@ namespace NinjaHorizon.Function
         public const string GOLD_ID = "b4a8100a-73a4-47e5-85e1-23a56a66a313";
         public const string TOKEN_ID = "349f39f1-fc39-424b-a44f-ddfdf39a171c";
 
+        public const string COIN_ID = "bf180bae-b805-43c9-99db-e2e8fc1a0719";
+
         public static bool IsGoldOrToken(string itemId)
         {
             return itemId == GOLD_ID || itemId == TOKEN_ID;

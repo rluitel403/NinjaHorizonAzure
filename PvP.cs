@@ -332,16 +332,14 @@ namespace NinjaHorizon.Function
             // If replay was played, assign turn to the other player
             if (turnData.battleReplayData.played)
             {
-                //we pass in stale data, because enemy has yet to replay this information with stale data.
+                //overwrites shared group data with turn data.
                 ProcessTurnSwitch(mySharedGroup, enemySharedGroup, turnData);
             }
-            // Check for winner, use updated data passed in my player because it is correct for determining the winner after player wins.
             if (PlayerHasWon(turnData))
             {
                 await playFabUtil.UpdatePlayerStatistics(new Dictionary<string, int> { { "pvp", 1 } });
             }
 
-            //we pass in stale data, because enemy has yet to replay this information with stale data.
             var data = new Dictionary<string, string>
             {
                 { entityId, JsonConvert.SerializeObject(mySharedGroup) },
