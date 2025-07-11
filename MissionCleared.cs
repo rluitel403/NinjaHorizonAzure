@@ -373,7 +373,7 @@ namespace NinjaHorizon.Function
             }
             else
             {
-                float rewardScaler = missionContext.FloorId / 2;
+                float rewardScaler = 1 + (missionContext.FloorId / 2);
                 float baseXp = 400;
                 float baseGold = 400;
                 grantedRewards = new Reward

@@ -45,10 +45,10 @@ namespace NinjaHorizon.Function
             );
 
             CostItem materialCostItem = costItems.requirements.Find(x =>
-                !InventoryUtil.IsGoldOrToken(x.itemId)
+                !InventoryUtil.IsCurrency(x.itemId)
             );
             CostItem goldOrTokenCostItem = costItems.requirements.Find(x =>
-                InventoryUtil.IsGoldOrToken(x.itemId)
+                InventoryUtil.IsCurrency(x.itemId)
             );
 
             string requiredItemFilter =

@@ -36,9 +36,9 @@ namespace NinjaHorizon.Function
 
         public const string COIN_ID = "bf180bae-b805-43c9-99db-e2e8fc1a0719";
 
-        public static bool IsGoldOrToken(string itemId)
+        public static bool IsCurrency(string itemId)
         {
-            return itemId == GOLD_ID || itemId == TOKEN_ID;
+            return itemId == GOLD_ID || itemId == TOKEN_ID || itemId == COIN_ID;
         }
 
         public static async Task<UpgradeCosts> GetUpgradeCosts(PlayFabUtil playfabUtil)

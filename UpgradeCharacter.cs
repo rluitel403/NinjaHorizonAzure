@@ -58,7 +58,7 @@ namespace NinjaHorizon.Function
             );
 
             CostItem goldOrTokenCostItem = costItems.requirements.Find(x =>
-                InventoryUtil.IsGoldOrToken(x.itemId)
+                InventoryUtil.IsCurrency(x.itemId)
             );
 
             //validate sufficient currency
