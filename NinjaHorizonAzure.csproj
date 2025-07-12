@@ -6,6 +6,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Sdk.Functions" Version="4.2.0" />
     <PackageReference Include="PlayFabAllSDK" Version="1.198.250328" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.1.5" />
+    <PackageReference Include="Dapper" Version="2.1.28" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">

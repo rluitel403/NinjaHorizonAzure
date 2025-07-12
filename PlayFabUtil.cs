@@ -32,6 +32,7 @@ namespace NinjaHorizon.Function
         public PlayFabEconomyInstanceAPI EconomyApi { get; private set; }
         public PlayFabMultiplayerInstanceAPI MultiplayerApi { get; private set; }
         public PlayFabProgressionInstanceAPI ProgressionApi { get; private set; }
+        public PlayFabGroupsInstanceAPI GroupsApi { get; private set; }
         public EntityKey Entity { get; private set; }
         public string PlayFabId { get; private set; }
 
@@ -40,6 +41,7 @@ namespace NinjaHorizon.Function
             PlayFabEconomyInstanceAPI economyApi,
             PlayFabMultiplayerInstanceAPI multiplayerApi,
             PlayFabProgressionInstanceAPI progressionApi,
+            PlayFabGroupsInstanceAPI groupsApi,
             EntityKey entity,
             string playFabId
         )
@@ -48,6 +50,7 @@ namespace NinjaHorizon.Function
             EconomyApi = economyApi;
             MultiplayerApi = multiplayerApi;
             ProgressionApi = progressionApi;
+            GroupsApi = groupsApi;
             Entity = entity;
             PlayFabId = playFabId;
         }
@@ -76,6 +79,7 @@ namespace NinjaHorizon.Function
                 new PlayFabEconomyInstanceAPI(apiSettings, titleContext),
                 new PlayFabMultiplayerInstanceAPI(apiSettings, titleContext),
                 new PlayFabProgressionInstanceAPI(apiSettings, titleContext),
+                new PlayFabGroupsInstanceAPI(apiSettings, titleContext),
                 entity,
                 context.CallerEntityProfile.Lineage.MasterPlayerAccountId
             );
