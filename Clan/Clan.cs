@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
@@ -104,10 +105,32 @@ namespace NinjaHorizon.Function
         public string DefenderClanId { get; set; }
     }
 
+    public class UpgradeBuildingRequest : BaseClanRequest
+    {
+        public string ClanId { get; set; }
+        public string BuildingType { get; set; } // "teahouse", "bathhouse", "trainingcentre"
+    }
+
+    public class GetClanStatusRequest : BaseClanRequest
+    {
+        public string GroupId { get; set; }
+    }
+
+    public class GetClanAttackHistoryRequest : BaseClanRequest
+    {
+        public string GroupId { get; set; }
+    }
+
+    public class PlayerClanResponse
+    {
+        public ClanMember Membership { get; set; }
+        public ClanInfo Clan { get; set; }
+    }
+
     public static class Clan
     {
         [FunctionName("Clan")]
-        public static async Task<IActionResult> Run(
+        public static async Task<dynamic> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
             ILogger log)
         {
@@ -193,12 +216,24 @@ namespace NinjaHorizon.Function
                         var restoreStaminaRequest = JsonConvert.DeserializeObject<RestoreStaminaRequest>(requestData.ToString());
                         return await RestoreStamina(playFabUtil, restoreStaminaRequest, log);
 
-                    case "getplayerclanmemberships":
-                        return await GetPlayerClanMemberships(playFabUtil, log);
+                    case "getplayerclan":
+                        return await GetPlayerClan(playFabUtil, log);
 
                     case "attackclan":
                         var attackRequest = JsonConvert.DeserializeObject<AttackClanRequest>(requestData.ToString());
                         return await AttackClan(playFabUtil, attackRequest, log);
+
+                    case "upgradebuilding":
+                        var upgradeBuildingRequest = JsonConvert.DeserializeObject<UpgradeBuildingRequest>(requestData.ToString());
+                        return await UpgradeBuilding(playFabUtil, upgradeBuildingRequest, log);
+
+                    case "getclanstatus":
+                        var getStatusRequest = JsonConvert.DeserializeObject<GetClanStatusRequest>(requestData.ToString());
+                        return await GetClanStatus(playFabUtil, getStatusRequest, log);
+
+                    case "getclanattackhistory":
+                        var getAttackHistoryRequest = JsonConvert.DeserializeObject<GetClanAttackHistoryRequest>(requestData.ToString());
+                        return await GetClanAttackHistory(playFabUtil, getAttackHistoryRequest, log);
 
                     default:
                         return new BadRequestObjectResult($"Unknown action: {baseRequest.Action}");
@@ -211,218 +246,218 @@ namespace NinjaHorizon.Function
             }
         }
 
-        private static async Task<IActionResult> CreateClan(PlayFabUtil playFabUtil, CreateClanRequest request, ILogger log)
+        private static async Task<dynamic> CreateClan(PlayFabUtil playFabUtil, CreateClanRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.ClanName))
             {
-                return new BadRequestObjectResult("ClanName is required for creating a clan.");
+                throw new Exception("ClanName is required for creating a clan.");
             }
 
             try
             {
                 var clanInfo = await ClanHelper.CreateClanAsync(playFabUtil, request.ClanName, request.Description ?? "");
                 log.LogInformation($"Created clan: {clanInfo.GroupName} with ID: {clanInfo.GroupId}");
-                return new OkObjectResult(clanInfo);
+                return JsonConvert.SerializeObject(clanInfo);
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error creating clan");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error creating clan: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> GetAllClans(PlayFabUtil playFabUtil, ILogger log)
+        private static async Task<dynamic> GetAllClans(PlayFabUtil playFabUtil, ILogger log)
         {
             try
             {
                 var clans = await ClanHelper.GetAllClansAsync(playFabUtil);
                 log.LogInformation($"Retrieved {clans.Count} clans");
-                return new OkObjectResult(clans);
+                return JsonConvert.SerializeObject(clans);
             }
             catch (Exception ex)
-           { 
+            {
                 log.LogError(ex, "Error getting all clans");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error getting all clans: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> GetClanInfo(PlayFabUtil playFabUtil, GetClanInfoRequest request, ILogger log)
+        private static async Task<dynamic> GetClanInfo(PlayFabUtil playFabUtil, GetClanInfoRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId))
             {
-                return new BadRequestObjectResult("GroupId is required for getting clan info.");
+                throw new Exception("GroupId is required for getting clan info.");
             }
 
             try
             {
                 var clanInfo = await ClanHelper.GetClanInfoAsync(playFabUtil, request.GroupId);
                 log.LogInformation($"Retrieved clan info for: {clanInfo.GroupName}");
-                return new OkObjectResult(clanInfo);
+                return JsonConvert.SerializeObject(clanInfo);
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error getting clan info");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error getting clan info: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> JoinClan(PlayFabUtil playFabUtil, JoinClanRequest request, ILogger log)
+        private static async Task<dynamic> JoinClan(PlayFabUtil playFabUtil, JoinClanRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId))
             {
-                return new BadRequestObjectResult("GroupId is required for joining a clan.");
+                throw new Exception("GroupId is required for joining a clan.");
             }
 
             try
             {
                 await ClanHelper.JoinClanAsync(playFabUtil, request.GroupId);
                 log.LogInformation($"Player {playFabUtil.Entity.Id} joined clan {request.GroupId}");
-                return new OkObjectResult(new { message = "Successfully joined clan" });
+                return new { message = "Successfully joined clan" };
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error joining clan");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error joining clan: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> LeaveClan(PlayFabUtil playFabUtil, LeaveClanRequest request, ILogger log)
+        private static async Task<dynamic> LeaveClan(PlayFabUtil playFabUtil, LeaveClanRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId))
             {
-                return new BadRequestObjectResult("GroupId is required for leaving a clan.");
+                throw new Exception("GroupId is required for leaving a clan.");
             }
 
             try
             {
                 await ClanHelper.LeaveClanAsync(playFabUtil, request.GroupId);
                 log.LogInformation($"Player {playFabUtil.Entity.Id} left clan {request.GroupId}");
-                return new OkObjectResult(new { message = "Successfully left clan" });
+                return new { message = "Successfully left clan" };
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error leaving clan");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error leaving clan: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> ApplyToClan(PlayFabUtil playFabUtil, ApplyToClanRequest request, ILogger log)
+        private static async Task<dynamic> ApplyToClan(PlayFabUtil playFabUtil, ApplyToClanRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId))
             {
-                return new BadRequestObjectResult("GroupId is required for applying to a clan.");
+                throw new Exception("GroupId is required for applying to a clan.");
             }
 
             try
             {
                 await ClanHelper.ApplyToClanAsync(playFabUtil, request.GroupId);
                 log.LogInformation($"Player {playFabUtil.Entity.Id} applied to clan {request.GroupId}");
-                return new OkObjectResult(new { message = "Successfully applied to clan" });
+                return new { message = "Successfully applied to clan" };
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error applying to clan");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error applying to clan: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> InvitePlayer(PlayFabUtil playFabUtil, InvitePlayerRequest request, ILogger log)
+        private static async Task<dynamic> InvitePlayer(PlayFabUtil playFabUtil, InvitePlayerRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId) || string.IsNullOrEmpty(request.PlayerEntityKeyId))
             {
-                return new BadRequestObjectResult("GroupId and PlayerEntityKeyId are required for inviting a player.");
+                throw new Exception("GroupId and PlayerEntityKeyId are required for inviting a player.");
             }
 
             try
             {
                 await ClanHelper.InvitePlayerAsync(playFabUtil, request.GroupId, request.PlayerEntityKeyId);
                 log.LogInformation($"Invited player {request.PlayerEntityKeyId} to clan {request.GroupId}");
-                return new OkObjectResult(new { message = "Successfully invited player" });
+                return new { message = "Successfully invited player" };
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error inviting player");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error inviting player: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> GetClanApplications(PlayFabUtil playFabUtil, GetClanApplicationsRequest request, ILogger log)
+        private static async Task<dynamic> GetClanApplications(PlayFabUtil playFabUtil, GetClanApplicationsRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId))
             {
-                return new BadRequestObjectResult("GroupId is required for getting clan applications.");
+                throw new Exception("GroupId is required for getting clan applications.");
             }
 
             try
             {
                 var applications = await ClanHelper.GetClanApplicationsAsync(playFabUtil, request.GroupId);
                 log.LogInformation($"Retrieved {applications.Count} applications for clan {request.GroupId}");
-                return new OkObjectResult(applications);
+                return JsonConvert.SerializeObject(applications);
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error getting clan applications");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error getting clan applications: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> AcceptApplication(PlayFabUtil playFabUtil, AcceptApplicationRequest request, ILogger log)
+        private static async Task<dynamic> AcceptApplication(PlayFabUtil playFabUtil, AcceptApplicationRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId) || string.IsNullOrEmpty(request.PlayerEntityKeyId))
             {
-                return new BadRequestObjectResult("GroupId and PlayerEntityKeyId are required for accepting an application.");
+                throw new Exception("GroupId and PlayerEntityKeyId are required for accepting an application.");
             }
 
             try
             {
                 await ClanHelper.AcceptApplicationAsync(playFabUtil, request.GroupId, request.PlayerEntityKeyId);
                 log.LogInformation($"Accepted application from player {request.PlayerEntityKeyId} to clan {request.GroupId}");
-                return new OkObjectResult(new { message = "Successfully accepted application" });
+                return new { message = "Successfully accepted application" };
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error accepting application");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error accepting application: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> RejectApplication(PlayFabUtil playFabUtil, RejectApplicationRequest request, ILogger log)
+        private static async Task<dynamic> RejectApplication(PlayFabUtil playFabUtil, RejectApplicationRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId) || string.IsNullOrEmpty(request.PlayerEntityKeyId))
             {
-                return new BadRequestObjectResult("GroupId and PlayerEntityKeyId are required for rejecting an application.");
+                throw new Exception("GroupId and PlayerEntityKeyId are required for rejecting an application.");
             }
 
             try
             {
                 await ClanHelper.RejectApplicationAsync(playFabUtil, request.GroupId, request.PlayerEntityKeyId);
                 log.LogInformation($"Rejected application from player {request.PlayerEntityKeyId} to clan {request.GroupId}");
-                return new OkObjectResult(new { message = "Successfully rejected application" });
+                return new { message = "Successfully rejected application" };
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error rejecting application");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error rejecting application: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> GetClanMembers(PlayFabUtil playFabUtil, GetClanMembersRequest request, ILogger log)
+        private static async Task<dynamic> GetClanMembers(PlayFabUtil playFabUtil, GetClanMembersRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.GroupId))
             {
-                return new BadRequestObjectResult("GroupId is required for getting clan members.");
+                throw new Exception("GroupId is required for getting clan members.");
             }
 
             try
             {
                 var members = await ClanHelper.GetClanMembersAsync(playFabUtil, request.GroupId);
                 log.LogInformation($"Retrieved {members.Count} members for clan {request.GroupId}");
-                return new OkObjectResult(members);
+                return JsonConvert.SerializeObject(members);
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error getting clan members");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error getting clan members: {ex.Message}");
             }
         }
 
@@ -518,42 +553,146 @@ namespace NinjaHorizon.Function
             }
         }
 
-        private static async Task<IActionResult> GetPlayerClanMemberships(PlayFabUtil playFabUtil, ILogger log)
+        private static async Task<dynamic> GetPlayerClan(PlayFabUtil playFabUtil, ILogger log)
         {
             try
             {
-                var memberships = await ClanHelper.GetPlayerClanMembershipsAsync(playFabUtil);
-                log.LogInformation($"Retrieved {memberships.Count} clan memberships for player {playFabUtil.Entity.Id}");
-                return new OkObjectResult(memberships);
+                var membership = await ClanHelper.GetPlayerClanAsync(playFabUtil);
+
+                if (membership == null)
+                {
+                    log.LogInformation($"Player {playFabUtil.Entity.Id} is not in any clan");
+                    var emptyResponse = new PlayerClanResponse
+                    {
+                        Membership = null,
+                        Clan = null
+                    };
+                    return JsonConvert.SerializeObject(emptyResponse);
+                }
+
+                // Get clan details if membership exists
+                ClanInfo clanDetails = null;
+                try
+                {
+                    clanDetails = await ClanHelper.GetClanInfoAsync(playFabUtil, membership.ClanId);
+                }
+                catch (Exception ex)
+                {
+                    log.LogWarning(ex, $"Could not get clan details for clan {membership.ClanId}");
+                    // Continue without clan details
+                }
+
+                var response = new PlayerClanResponse
+                {
+                    Membership = membership,
+                    Clan = clanDetails
+                };
+
+                log.LogInformation($"Retrieved clan membership for player {playFabUtil.Entity.Id} in clan {membership.ClanId}");
+                return JsonConvert.SerializeObject(response);
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error getting player clan memberships");
-                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+                throw new Exception($"Error getting player clan: {ex.Message}");
             }
         }
 
-        private static async Task<IActionResult> AttackClan(PlayFabUtil playFabUtil, AttackClanRequest request, ILogger log)
+        private static async Task<dynamic> AttackClan(PlayFabUtil playFabUtil, AttackClanRequest request, ILogger log)
         {
             if (string.IsNullOrEmpty(request.AttackerClanId) || string.IsNullOrEmpty(request.DefenderClanId))
             {
-                return new BadRequestObjectResult("AttackerClanId and DefenderClanId are required for attacking a clan.");
+                throw new Exception("AttackerClanId and DefenderClanId are required for attacking a clan.");
             }
 
             if (request.AttackerClanId == request.DefenderClanId)
             {
-                return new BadRequestObjectResult("Cannot attack your own clan.");
+                throw new Exception("Cannot attack your own clan.");
             }
 
             try
             {
                 var attackResult = await ClanHelper.AttackClanAsync(playFabUtil, request.AttackerClanId, request.DefenderClanId);
                 log.LogInformation($"Clan attack: {request.AttackerClanId} -> {request.DefenderClanId}, Success: {attackResult.IsSuccessful}, Reputation: {attackResult.ReputationGained}");
-                return new OkObjectResult(attackResult);
+                return JsonConvert.SerializeObject(attackResult);
             }
             catch (Exception ex)
             {
                 log.LogError(ex, "Error attacking clan");
+                throw new Exception($"Error attacking clan: {ex.Message}");
+            }
+        }
+
+        private static async Task<IActionResult> UpgradeBuilding(PlayFabUtil playFabUtil, UpgradeBuildingRequest request, ILogger log)
+        {
+            if (string.IsNullOrEmpty(request.ClanId) || string.IsNullOrEmpty(request.BuildingType))
+            {
+                return new BadRequestObjectResult("ClanId and BuildingType are required for upgrading a building.");
+            }
+
+            var validBuildingTypes = new[] { "teahouse", "bathhouse", "trainingcentre" };
+            if (!validBuildingTypes.Any(bt => bt == request.BuildingType.ToLower()))
+            {
+                return new BadRequestObjectResult("BuildingType must be one of: teahouse, bathhouse, trainingcentre");
+            }
+
+            try
+            {
+                var upgraded = await ClanHelper.UpgradeBuildingAsync(playFabUtil, request.ClanId, request.BuildingType);
+                if (upgraded)
+                {
+                    log.LogInformation($"Successfully upgraded {request.BuildingType} for clan {request.ClanId}");
+                    return new OkObjectResult(new { message = $"Successfully upgraded {request.BuildingType}", success = true });
+                }
+                else
+                {
+                    log.LogWarning($"Failed to upgrade {request.BuildingType} for clan {request.ClanId} - already at max level or insufficient resources");
+                    return new BadRequestObjectResult("Building is already at maximum level or insufficient resources");
+                }
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Error upgrading building");
+                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+            }
+        }
+
+        private static async Task<IActionResult> GetClanStatus(PlayFabUtil playFabUtil, GetClanStatusRequest request, ILogger log)
+        {
+            if (string.IsNullOrEmpty(request.GroupId))
+            {
+                return new BadRequestObjectResult("GroupId is required for getting clan status.");
+            }
+
+            try
+            {
+                var status = await ClanHelper.GetClanCurrentStatusAsync(playFabUtil, request.GroupId);
+                log.LogInformation($"Retrieved clan status for: {request.GroupId}");
+                return new OkObjectResult(status);
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Error getting clan status");
+                return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
+            }
+        }
+
+        private static async Task<IActionResult> GetClanAttackHistory(PlayFabUtil playFabUtil, GetClanAttackHistoryRequest request, ILogger log)
+        {
+            if (string.IsNullOrEmpty(request.GroupId))
+            {
+                return new BadRequestObjectResult("GroupId is required for getting clan attack history.");
+            }
+
+            try
+            {
+                var attacks = await ClanHelper.GetClanRecentAttacksAsync(playFabUtil, request.GroupId);
+                log.LogInformation($"Retrieved {attacks.Count} recent attacks for clan: {request.GroupId}");
+                return new OkObjectResult(attacks);
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Error getting clan attack history");
                 return new ObjectResult(new { error = ex.Message }) { StatusCode = 500 };
             }
         }

@@ -33,6 +33,7 @@ namespace NinjaHorizon.Function
         public PlayFabMultiplayerInstanceAPI MultiplayerApi { get; private set; }
         public PlayFabProgressionInstanceAPI ProgressionApi { get; private set; }
         public PlayFabGroupsInstanceAPI GroupsApi { get; private set; }
+        public PlayFabDataInstanceAPI DataApi { get; private set; }
         public EntityKey Entity { get; private set; }
         public string PlayFabId { get; private set; }
 
@@ -42,6 +43,7 @@ namespace NinjaHorizon.Function
             PlayFabMultiplayerInstanceAPI multiplayerApi,
             PlayFabProgressionInstanceAPI progressionApi,
             PlayFabGroupsInstanceAPI groupsApi,
+            PlayFabDataInstanceAPI dataApi,
             EntityKey entity,
             string playFabId
         )
@@ -51,6 +53,7 @@ namespace NinjaHorizon.Function
             MultiplayerApi = multiplayerApi;
             ProgressionApi = progressionApi;
             GroupsApi = groupsApi;
+            DataApi = dataApi;
             Entity = entity;
             PlayFabId = playFabId;
         }
@@ -80,6 +83,7 @@ namespace NinjaHorizon.Function
                 new PlayFabMultiplayerInstanceAPI(apiSettings, titleContext),
                 new PlayFabProgressionInstanceAPI(apiSettings, titleContext),
                 new PlayFabGroupsInstanceAPI(apiSettings, titleContext),
+                new PlayFabDataInstanceAPI(apiSettings, titleContext),
                 entity,
                 context.CallerEntityProfile.Lineage.MasterPlayerAccountId
             );
@@ -306,6 +310,229 @@ namespace NinjaHorizon.Function
                 throw new Exception($"Failed to update shared group data: {result.Error.ErrorMessage}");
             }
             return result.Result;
+        }
+
+        public async Task<PlayFab.GroupsModels.CreateGroupResponse> CreateEntityGroup(string groupName, EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.CreateGroupRequest
+            {
+                GroupName = groupName,
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.CreateGroupAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to create entity group: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<PlayFab.GroupsModels.GetGroupResponse> GetEntityGroup(string groupId)
+        {
+            var request = new PlayFab.GroupsModels.GetGroupRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId }
+            };
+
+            var result = await GroupsApi.GetGroupAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to get entity group: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<PlayFab.DataModels.SetObjectsResponse> SetEntityGroupObjects(string groupId, Dictionary<string, object> objects)
+        {
+            var request = new PlayFab.DataModels.SetObjectsRequest
+            {
+                Entity = new PlayFab.DataModels.EntityKey { Id = groupId },
+                Objects = objects.Select(kvp => new PlayFab.DataModels.SetObject
+                {
+                    ObjectName = kvp.Key,
+                    DataObject = kvp.Value
+                }).ToList()
+            };
+
+            var result = await DataApi.SetObjectsAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to set entity group objects: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<PlayFab.DataModels.GetObjectsResponse> GetEntityGroupObjects(string groupId, List<string> objectNames = null)
+        {
+            var request = new PlayFab.DataModels.GetObjectsRequest
+            {
+                Entity = new PlayFab.DataModels.EntityKey { Id = groupId }
+            };
+
+            if (objectNames != null && objectNames.Count > 0)
+            {
+                request.EscapeObject = false;
+            }
+
+            var result = await DataApi.GetObjectsAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to get entity group objects: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<PlayFab.GroupsModels.InviteToGroupResponse> InviteToEntityGroup(string groupId, EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.InviteToGroupRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId },
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.InviteToGroupAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to invite to entity group: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<PlayFab.GroupsModels.ApplyToGroupResponse> ApplyToEntityGroup(string groupId, EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.ApplyToGroupRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId },
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.ApplyToGroupAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to apply to entity group: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task AcceptEntityGroupInvitation(string groupId, EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.AcceptGroupInvitationRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId },
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.AcceptGroupInvitationAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to accept entity group invitation: {result.Error.ErrorMessage}");
+            }
+        }
+
+        public async Task AcceptEntityGroupApplication(string groupId, EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.AcceptGroupApplicationRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId },
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.AcceptGroupApplicationAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to accept entity group application: {result.Error.ErrorMessage}");
+            }
+        }
+
+        public async Task<PlayFab.GroupsModels.ListMembershipResponse> ListEntityGroupMembership(EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.ListMembershipRequest
+            {
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.ListMembershipAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to list entity group membership: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task<PlayFab.GroupsModels.ListGroupMembersResponse> ListEntityGroupMembers(string groupId)
+        {
+            var request = new PlayFab.GroupsModels.ListGroupMembersRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId }
+            };
+
+            var result = await GroupsApi.ListGroupMembersAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to list entity group members: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task RemoveEntityGroupMembers(string groupId, List<EntityKey> members)
+        {
+            var groupsMembers = members.Select(m => new PlayFab.GroupsModels.EntityKey { Id = m.Id, Type = m.Type }).ToList();
+            var request = new PlayFab.GroupsModels.RemoveMembersRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId },
+                Members = groupsMembers
+            };
+
+            var result = await GroupsApi.RemoveMembersAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to remove entity group members: {result.Error.ErrorMessage}");
+            }
+        }
+
+        public async Task<PlayFab.GroupsModels.ListGroupApplicationsResponse> ListEntityGroupApplications(string groupId)
+        {
+            var request = new PlayFab.GroupsModels.ListGroupApplicationsRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId }
+            };
+
+            var result = await GroupsApi.ListGroupApplicationsAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to list entity group applications: {result.Error.ErrorMessage}");
+            }
+            return result.Result;
+        }
+
+        public async Task RejectEntityGroupApplication(string groupId, EntityKey entity)
+        {
+            var request = new PlayFab.GroupsModels.RemoveGroupApplicationRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId },
+                Entity = new PlayFab.GroupsModels.EntityKey { Id = entity.Id, Type = entity.Type }
+            };
+
+            var result = await GroupsApi.RemoveGroupApplicationAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to reject entity group application: {result.Error.ErrorMessage}");
+            }
+        }
+
+        public async Task DeleteEntityGroup(string groupId)
+        {
+            var request = new PlayFab.GroupsModels.DeleteGroupRequest
+            {
+                Group = new PlayFab.GroupsModels.EntityKey { Id = groupId }
+            };
+
+            var result = await GroupsApi.DeleteGroupAsync(request);
+            if (result.Error != null)
+            {
+                throw new Exception($"Failed to delete entity group: {result.Error.ErrorMessage}");
+            }
         }
 
         public static string GetStackIdFromType(string type)
