@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Azure.WebJobs;
@@ -11,6 +12,8 @@ using PlayFab.ServerModels;
 
 namespace NinjaHorizon.Function
 {
+    #region Data Models
+    
     public class AchievementInput
     {
         public int id { get; set; }
@@ -25,189 +28,318 @@ namespace NinjaHorizon.Function
         public List<DailyRewardItem> rewards { get; set; }
     }
 
+    public class AchievementData
+    {
+        public Dictionary<int, AchievementTracker> Trackers { get; set; }
+        public List<AchievementInfo> Infos { get; set; }
+    }
+    
+    #endregion
+
+    /// <summary>
+    /// Azure Function for managing player achievements - tracking progress and claiming rewards
+    /// </summary>
     public static class AchievementManager
     {
+        #region Constants
+        
+        private const string USER_DATA_KEY = "Achievements";
+        private const string TITLE_DATA_KEY = "achievements";
+        private const string ACTION_UPDATE = "update";
+        private const string ACTION_CLAIM = "claim";
+        
+        // Social achievement IDs that can be claimed without progress tracking
+        private static readonly HashSet<int> SocialAchievementIds = new HashSet<int> { 2 };
+        
+        #endregion
+
+        #region Main Entry Point
+        
         [FunctionName("AchievementManager")]
         public static async Task<dynamic> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
             ILogger log
         )
         {
-            var context = await PlayFabUtil.ParseFunctionContext(req);
-            var playfabUtil = PlayFabUtil.InitializeFromContext(context);
-            AchievementInput achievementInput = JsonConvert.DeserializeObject<AchievementInput>(
+            try
+            {
+                var context = await PlayFabUtil.ParseFunctionContext(req);
+                var playfabUtil = PlayFabUtil.InitializeFromContext(context);
+                var input = ParseInput(context);
+
+                var achievementData = await LoadAchievementDataAsync(playfabUtil);
+
+                return input.action switch
+                {
+                    ACTION_UPDATE => await UpdateAchievementAsync(playfabUtil, input, achievementData),
+                    ACTION_CLAIM => await ClaimAchievementAsync(playfabUtil, input, achievementData),
+                    _ => throw new ArgumentException($"Invalid action: {input.action}. Must be '{ACTION_UPDATE}' or '{ACTION_CLAIM}'.")
+                };
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Error in AchievementManager");
+                throw;
+            }
+        }
+        
+        #endregion
+
+        #region Input Parsing
+        
+        private static AchievementInput ParseInput(dynamic context)
+        {
+            return JsonConvert.DeserializeObject<AchievementInput>(
                 context.FunctionArgument.ToString()
             );
-
-            // Get achievement data first
-            var (achievements, achievementInfos) = await GetAchievementData(playfabUtil);
-
-            if (achievementInput.action == "update")
-            {
-                return await UpdateAchievement(
-                    playfabUtil,
-                    achievementInput,
-                    achievements,
-                    achievementInfos
-                );
-            }
-            else if (achievementInput.action == "claim")
-            {
-                return await ClaimAchievement(
-                    playfabUtil,
-                    achievementInput,
-                    achievements,
-                    achievementInfos
-                );
-            }
-            throw new Exception("Invalid action");
         }
+        
+        #endregion
 
-        private static async Task<(
-            Dictionary<int, AchievementTracker>,
-            List<AchievementInfo>
-        )> GetAchievementData(PlayFabUtil playfabUtil)
+        #region Data Loading
+        
+        private static async Task<AchievementData> LoadAchievementDataAsync(PlayFabUtil playfabUtil)
         {
-            //get player combined info from playfab util
             var combinedInfoResult = await playfabUtil.GetPlayerCombinedInfo(
-                new List<string> { "achievements" },
-                new List<string> { "Achievements" },
+                new List<string> { USER_DATA_KEY.ToLower() },
+                new List<string> { USER_DATA_KEY },
                 null
             );
 
-            Dictionary<int, AchievementTracker> achievements =
-                new Dictionary<int, AchievementTracker>();
-            List<AchievementInfo> achievementInfos = new List<AchievementInfo>();
+            var trackers = LoadAchievementTrackers(combinedInfoResult.InfoResultPayload.UserData);
+            var infos = LoadAchievementInfos(combinedInfoResult.InfoResultPayload.TitleData);
 
-            var userData = combinedInfoResult.InfoResultPayload.UserData;
-            var titleData = combinedInfoResult.InfoResultPayload.TitleData;
-            if (userData.ContainsKey("Achievements"))
+            return new AchievementData
             {
-                achievements = JsonConvert.DeserializeObject<Dictionary<int, AchievementTracker>>(
-                    userData["Achievements"].Value
-                );
-            }
-            if (titleData.ContainsKey("achievements"))
-            {
-                achievementInfos = JsonConvert.DeserializeObject<List<AchievementInfo>>(
-                    titleData["achievements"].ToString()
-                );
-            }
-
-            return (achievements, achievementInfos);
+                Trackers = trackers,
+                Infos = infos
+            };
         }
 
-        public static async Task<string> UpdateAchievement(
-            PlayFabUtil playfabUtil,
-            AchievementInput achievementInput,
-            Dictionary<int, AchievementTracker> achievements,
-            List<AchievementInfo> achievementInfos
+        private static Dictionary<int, AchievementTracker> LoadAchievementTrackers(
+            Dictionary<string, UserDataRecord> userData
         )
         {
-            // Move achievement update logic here
-            if (achievements.ContainsKey(achievementInput.id))
+            if (userData.ContainsKey(USER_DATA_KEY))
             {
-                achievements[achievementInput.id].progress += 1;
+                return JsonConvert.DeserializeObject<Dictionary<int, AchievementTracker>>(
+                    userData[USER_DATA_KEY].Value
+                ) ?? new Dictionary<int, AchievementTracker>();
             }
-            else
+            return new Dictionary<int, AchievementTracker>();
+        }
+
+        private static List<AchievementInfo> LoadAchievementInfos(
+            Dictionary<string, string> titleData
+        )
+        {
+            if (titleData.ContainsKey(TITLE_DATA_KEY))
             {
-                var achievementTracker = new AchievementTracker { progress = 1 };
-                achievements.Add(achievementInput.id, achievementTracker);
+                return JsonConvert.DeserializeObject<List<AchievementInfo>>(
+                    titleData[TITLE_DATA_KEY]
+                ) ?? new List<AchievementInfo>();
+            }
+            return new List<AchievementInfo>();
+        }
+        
+        #endregion
+
+        #region Update Achievement
+        
+        /// <summary>
+        /// Increments achievement progress by 1. Creates tracker if it doesn't exist.
+        /// Marks as completed when maxProgress is reached.
+        /// </summary>
+        private static async Task<string> UpdateAchievementAsync(
+            PlayFabUtil playfabUtil,
+            AchievementInput input,
+            AchievementData data
+        )
+        {
+            var achievementInfo = FindAchievementInfo(data.Infos, input.id);
+            if (achievementInfo == null)
+            {
+                throw new ArgumentException($"Achievement with ID {input.id} not found.");
             }
 
-            var achievementInfo = achievementInfos.Find(a => a.id == achievementInput.id);
+            // Get or create tracker
+            if (!data.Trackers.ContainsKey(input.id))
+            {
+                data.Trackers[input.id] = new AchievementTracker
+                {
+                    progress = 0,
+                    completed = false,
+                    claimed = false
+                };
+            }
 
-            achievements[achievementInput.id].completed =
-                achievements[achievementInput.id].progress >= achievementInfo.maxProgress;
+            var tracker = data.Trackers[input.id];
 
-            var serializedAchievements = JsonConvert.SerializeObject(achievements);
-            await playfabUtil.UpdateUserData(
-                new Dictionary<string, string> { { "Achievements", serializedAchievements } }
+            // Don't update if already completed
+            if (tracker.completed)
+            {
+                return JsonConvert.SerializeObject(new { achievements = data.Trackers });
+            }
+
+            // Increment progress
+            tracker.progress++;
+            tracker.completed = tracker.progress >= achievementInfo.maxProgress;
+
+            // Save to PlayFab
+            await SaveAchievementTrackersAsync(playfabUtil, data.Trackers);
+
+            return JsonConvert.SerializeObject(new { achievements = data.Trackers });
+        }
+        
+        #endregion
+
+        #region Claim Achievement
+        
+        /// <summary>
+        /// Claims achievement rewards if conditions are met.
+        /// Grants items and marks achievement as claimed.
+        /// </summary>
+        private static async Task<string> ClaimAchievementAsync(
+            PlayFabUtil playfabUtil,
+            AchievementInput input,
+            AchievementData data
+        )
+        {
+            var achievementInfo = FindAchievementInfo(data.Infos, input.id);
+            if (achievementInfo == null)
+            {
+                throw new ArgumentException($"Achievement with ID {input.id} not found.");
+            }
+
+            bool isSocialAchievement = IsSocialAchievement(input.id);
+
+            // Validate claim conditions
+            ValidateClaimConditions(input.id, data.Trackers, achievementInfo, isSocialAchievement);
+
+            // Handle social achievement (create tracker if needed)
+            if (isSocialAchievement && !data.Trackers.ContainsKey(input.id))
+            {
+                data.Trackers[input.id] = new AchievementTracker
+                {
+                    progress = achievementInfo.maxProgress,
+                    completed = true,
+                    claimed = false
+                };
+            }
+
+            // Grant rewards
+            var inventoryItems = await GrantAchievementRewardsAsync(
+                playfabUtil,
+                achievementInfo.rewards
             );
 
-            return JsonConvert.SerializeObject(new { achievements });
+            // Mark as claimed
+            data.Trackers[input.id].claimed = true;
+            await SaveAchievementTrackersAsync(playfabUtil, data.Trackers);
+
+            return JsonConvert.SerializeObject(
+                new { inventoryItems, achievements = data.Trackers }
+            );
         }
 
-        private static async Task<string> ClaimAchievement(
-            PlayFabUtil playfabUtil,
-            AchievementInput achievementInput,
-            Dictionary<int, AchievementTracker> achievements,
-            List<AchievementInfo> achievementInfos
+        private static void ValidateClaimConditions(
+            int achievementId,
+            Dictionary<int, AchievementTracker> trackers,
+            AchievementInfo achievementInfo,
+            bool isSocialAchievement
         )
         {
-            // Implement claim logic here
-            var achievementInfo = achievementInfos.Find(a => a.id == achievementInput.id);
-            List<int> socialAchievements = new List<int> { 2 };
-            bool isSocialAchievement = socialAchievements.Contains(achievementInput.id);
-            //throw error if achievement is not found, progress is not max progress, or achievement is already claimed
-            if (
-                !isSocialAchievement
-                && (
-                    achievementInfo == null
-                    || achievements[achievementInput.id]?.progress != achievementInfo.maxProgress
-                    || achievements[achievementInput.id]?.claimed == true
-                )
-            )
-            {
-                throw new Exception("Cannot claim achievement");
-            }
-            List<InventoryOperation> inventoryOperations = new List<InventoryOperation>();
-            List<InventoryItem> inventoryItems = new List<InventoryItem>();
-            //grant the rewards
-            foreach (var reward in achievementInfo.rewards)
-            {
-                string stackId = PlayFabUtil.GetStackIdFromType(reward.type);
-                inventoryItems.Add(
-                    new InventoryItem
-                    {
-                        Id = reward.itemId,
-                        StackId = stackId,
-                        Amount = reward.amount,
-                        DisplayProperties = stackId != null ? new { reward.tier } : null
-                    }
-                );
-                inventoryOperations.Add(
-                    new InventoryOperation
-                    {
-                        Add = new AddInventoryItemsOperation
-                        {
-                            Item = new InventoryItemReference
-                            {
-                                Id = reward.itemId,
-                                StackId = stackId
-                            },
-                            Amount = reward.amount,
-                            NewStackValues =
-                                stackId != null
-                                    ? new InitialValues { DisplayProperties = new { reward.tier } }
-                                    : null
-                        }
-                    }
-                );
-            }
-            //mark achievement as claimed
+            // Social achievements can be claimed without prior progress
             if (isSocialAchievement)
             {
-                achievements.Add(
-                    achievementInput.id,
-                    new AchievementTracker
-                    {
-                        id = achievementInfo.id,
-                        progress = achievementInfo.maxProgress,
-                        claimed = true,
-                        completed = true
-                    }
+                return;
+            }
+
+            // Check if tracker exists
+            if (!trackers.ContainsKey(achievementId))
+            {
+                throw new InvalidOperationException(
+                    $"Achievement {achievementId} has no progress tracked."
                 );
             }
-            achievements[achievementInput.id].claimed = true;
-            var serializedAchievements = JsonConvert.SerializeObject(achievements);
-            await playfabUtil.UpdateUserData(
-                new Dictionary<string, string> { { "Achievements", serializedAchievements } }
-            );
-            //grant items
-            await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
 
-            return JsonConvert.SerializeObject(new { inventoryItems, achievements });
+            var tracker = trackers[achievementId];
+
+            // Check if already claimed
+            if (tracker.claimed)
+            {
+                throw new InvalidOperationException(
+                    $"Achievement {achievementId} has already been claimed."
+                );
+            }
+
+            // Check if completed
+            if (tracker.progress < achievementInfo.maxProgress)
+            {
+                throw new InvalidOperationException(
+                    $"Achievement {achievementId} is not completed yet. Progress: {tracker.progress}/{achievementInfo.maxProgress}"
+                );
+            }
         }
+
+        private static async Task<List<InventoryItem>> GrantAchievementRewardsAsync(
+            PlayFabUtil playfabUtil,
+            List<DailyRewardItem> rewards
+        )
+        {
+            var inventoryOperations = new List<InventoryOperation>();
+            var inventoryItems = new List<InventoryItem>();
+
+            foreach (var reward in rewards)
+            {
+                inventoryOperations.Add(
+                    PlayFabUtil.CreateAddNewItemOperation(
+                        reward.itemId, 
+                        reward.type, 
+                        reward.amount, 
+                        reward.tier
+                    )
+                );
+                
+                inventoryItems.Add(
+                    PlayFabUtil.CreateNewInventoryItem(
+                        reward.itemId, 
+                        reward.type, 
+                        reward.amount, 
+                        reward.tier
+                    )
+                );
+            }
+
+            await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
+            return inventoryItems;
+        }
+        
+        #endregion
+
+        #region Helper Methods
+        
+        private static AchievementInfo FindAchievementInfo(List<AchievementInfo> infos, int id)
+        {
+            return infos.FirstOrDefault(a => a.id == id);
+        }
+
+        private static bool IsSocialAchievement(int achievementId)
+        {
+            return SocialAchievementIds.Contains(achievementId);
+        }
+
+        private static async Task SaveAchievementTrackersAsync(
+            PlayFabUtil playfabUtil,
+            Dictionary<int, AchievementTracker> trackers
+        )
+        {
+            var serialized = JsonConvert.SerializeObject(trackers);
+            await playfabUtil.UpdateUserData(
+                new Dictionary<string, string> { { USER_DATA_KEY, serialized } }
+            );
+        }
+        
+        #endregion
     }
 }

@@ -537,9 +537,63 @@ namespace NinjaHorizon.Function
 
         public static string GetStackIdFromType(string type)
         {
-            if (type == "Entity" || type == "Weapon" || type == "BackItem" || type == "Clothing")
+            if (type == "Entity" || type == "Item")
                 return Guid.NewGuid().ToString();
             return null;
+        }
+
+        /// <summary>
+        /// Creates an inventory operation to ADD A NEW ITEM with proper display properties.
+        /// Generates a new Stack ID for characters, weapons, clothing, and back items.
+        /// ⚠️ WARNING: Only use when granting NEW items. Do NOT use for updating existing items!
+        /// </summary>
+        /// <param name="itemId">The catalog item ID</param>
+        /// <param name="type">Item type (Entity, Weapon, Currency, Material, etc.)</param>
+        /// <param name="amount">Quantity to grant</param>
+        /// <param name="tier">Tier/star level (0-4 for 1-5 stars)</param>
+        public static InventoryOperation CreateAddNewItemOperation(string itemId, string type, int amount = 1, int tier = 0)
+        {
+            string stackId = GetStackIdFromType(type);
+            bool hasDisplayProperties = stackId != null;
+
+            return new InventoryOperation
+            {
+                Add = new AddInventoryItemsOperation
+                {
+                    Item = new InventoryItemReference
+                    {
+                        Id = itemId,
+                        StackId = stackId
+                    },
+                    Amount = amount,
+                    NewStackValues = hasDisplayProperties
+                        ? new InitialValues { DisplayProperties = new { tier } }
+                        : null
+                }
+            };
+        }
+
+        /// <summary>
+        /// Creates an inventory item for response/return values with proper display properties.
+        /// Generates a new Stack ID for characters, weapons, clothing, and back items.
+        /// ⚠️ WARNING: Only use for NEW items being granted. Do NOT use for existing items!
+        /// </summary>
+        /// <param name="itemId">The catalog item ID</param>
+        /// <param name="type">Item type (Entity, Weapon, Currency, Material, etc.)</param>
+        /// <param name="amount">Quantity granted</param>
+        /// <param name="tier">Tier/star level (0-4 for 1-5 stars)</param>
+        public static InventoryItem CreateNewInventoryItem(string itemId, string type, int amount = 1, int tier = 0)
+        {
+            string stackId = GetStackIdFromType(type);
+            bool hasDisplayProperties = stackId != null;
+
+            return new InventoryItem
+            {
+                Id = itemId,
+                StackId = stackId,
+                Amount = amount,
+                DisplayProperties = hasDisplayProperties ? new { tier } : null
+            };
         }
     }
 }

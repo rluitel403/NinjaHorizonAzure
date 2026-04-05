@@ -16,6 +16,7 @@ namespace NinjaHorizon.Function
         public string itemId;
         public int amount;
         public int chance;
+        public int tier; // For characters, weapons, etc.
     }
 
     public static class Gacha
@@ -71,13 +72,11 @@ namespace NinjaHorizon.Function
                     break;
                 }
             }
-            GachaItem item = gachaItems[itemIndex];
-            string itemId = item.itemId;
-
-            string stackId = item.type != "Currency" ? Guid.NewGuid().ToString() : null;
+            GachaItem wonItem = gachaItems[itemIndex];
 
             List<InventoryOperation> inventoryOperations = new List<InventoryOperation>
             {
+                // Subtract coin
                 new InventoryOperation
                 {
                     Subtract = new SubtractInventoryItemsOperation
@@ -86,27 +85,26 @@ namespace NinjaHorizon.Function
                         Item = new InventoryItemReference { Id = coinItemId }
                     }
                 },
-                new InventoryOperation
-                {
-                    Add = new AddInventoryItemsOperation
-                    {
-                        Amount = item.amount,
-                        Item = new InventoryItemReference() { Id = itemId, StackId = stackId },
-                    }
-                }
+                // Add won item
+                PlayFabUtil.CreateAddNewItemOperation(
+                    wonItem.itemId, 
+                    wonItem.type, 
+                    wonItem.amount, 
+                    wonItem.tier
+                )
             };
 
             await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
 
             List<InventoryItem> inventoryItems = new List<InventoryItem>
             {
-                new InventoryItem()
-                {
-                    Amount = item.amount,
-                    Id = itemId,
-                    StackId = stackId
-                },
-                new InventoryItem() { Amount = -1, Id = coinItemId }
+                PlayFabUtil.CreateNewInventoryItem(
+                    wonItem.itemId, 
+                    wonItem.type, 
+                    wonItem.amount, 
+                    wonItem.tier
+                ),
+                new InventoryItem { Amount = -1, Id = coinItemId } // Coin subtraction
             };
 
             return new { itemIndex, inventoryItems };

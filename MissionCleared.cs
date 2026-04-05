@@ -16,10 +16,10 @@ namespace NinjaHorizon.Function
 {
     public class BattleType
     {
-        public static string PVE = "PVE";
-        public static string PVP = "PVP";
-        public static string PVE_HUTNING_HOUSE = "PVE_HUTNING_HOUSE";
-        public static string PVE_TOWER = "PVE_TOWER";
+        public const string PVE = "PVE";
+        public const string PVP = "PVP";
+        public const string PVE_HUNTING_HOUSE = "PVE_HUNTING_HOUSE";
+        public const string PVE_TOWER = "PVE_TOWER";
     }
 
     public class EntityData
@@ -76,6 +76,19 @@ namespace NinjaHorizon.Function
         public List<Mission> missions { get; set; }
     }
 
+    /// <summary>
+    /// Request object for mission cleared function
+    /// </summary>
+    public class MissionClearedRequest
+    {
+        public int missionGradeId { get; set; }
+        public int missionId { get; set; }
+        public int difficulty { get; set; }
+        public int floorId { get; set; }
+        public string battleType { get; set; }
+        public List<string> selectedCharacters { get; set; }
+    }
+
     public class MissionContext
     {
         public int MissionGradeId { get; set; }
@@ -91,19 +104,19 @@ namespace NinjaHorizon.Function
         public int ScaledMissionId { get; set; }
         public int NumberOfMission { get; set; }
 
-        public MissionContext(dynamic args)
+        public MissionContext(MissionClearedRequest request)
         {
-            MissionGradeId = args.missionGradeId;
-            MissionId = args.missionId;
-            Difficulty = args.difficulty;
-            FloorId = args.floorId;
-            IsHuntingHouse = args.battleType == BattleType.PVE_HUTNING_HOUSE;
+            MissionGradeId = request.missionGradeId;
+            MissionId = request.missionId;
+            Difficulty = request.difficulty;
+            FloorId = request.floorId;
+            IsHuntingHouse = request.battleType == BattleType.PVE_HUNTING_HOUSE;
             IsMissionOrTower =
-                args.battleType == BattleType.PVE || args.battleType == BattleType.PVE_TOWER;
-            IsMission = args.battleType == BattleType.PVE;
-            IsTower = args.battleType == BattleType.PVE_TOWER;
+                request.battleType == BattleType.PVE || request.battleType == BattleType.PVE_TOWER;
+            IsMission = request.battleType == BattleType.PVE;
+            IsTower = request.battleType == BattleType.PVE_TOWER;
             MissionGrade = "missiongrade" + MissionGradeId;
-            ScaledMissionId = MissionId + 10 * Difficulty;
+            ScaledMissionId = MissionId + MissionRewardConfig.DIFFICULTY_SCALE_MULTIPLIER * Difficulty;
         }
     }
 
@@ -160,6 +173,9 @@ namespace NinjaHorizon.Function
 
     public static class MissionCleared
     {
+        // Shared Random instance to avoid time-based seeding issues
+        private static readonly Random _random = new Random();
+        
         [FunctionName("MissionCleared")]
         public static async Task<dynamic> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
@@ -168,10 +184,25 @@ namespace NinjaHorizon.Function
         {
             var context = await PlayFabUtil.ParseFunctionContext(req);
             var playfabUtil = PlayFabUtil.InitializeFromContext(context);
-            var args = context.FunctionArgument;
+            
+            // Parse request into strongly-typed object
+            var request = JsonConvert.DeserializeObject<MissionClearedRequest>(
+                context.FunctionArgument.ToString(),
+                new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+            );
 
-            var missionContext = new MissionContext(args);
-            var playerInfo = await GetPlayerInfo(playfabUtil, missionContext);
+            if (request == null)
+            {
+                throw new Exception("Invalid mission request data");
+            }
+
+            if (request.selectedCharacters == null || request.selectedCharacters.Count == 0)
+            {
+                throw new Exception("No characters selected for mission");
+            }
+
+            var missionContext = new MissionContext(request);
+            var playerInfo = await GetPlayerInfo(playfabUtil, missionContext, request.selectedCharacters);
             var resultData = new ResultData();
 
             ValidateEnergy(playerInfo.UserData, resultData, missionContext);
@@ -209,7 +240,8 @@ namespace NinjaHorizon.Function
 
         private static async Task<PlayerInfo> GetPlayerInfo(
             PlayFabUtil playfabUtil,
-            MissionContext missionContext
+            MissionContext missionContext,
+            List<string> selectedCharacters
         )
         {
             var combinedInfoResult = await playfabUtil.ServerApi.GetPlayerCombinedInfoAsync(
@@ -233,19 +265,30 @@ namespace NinjaHorizon.Function
                 }
             );
 
+            // Validate that client-sent characters match server-stored selection
+            List<string> serverSelectedCharacters = null;
+            if (combinedInfoResult.Result.InfoResultPayload.UserData.ContainsKey("SelectedCharacters"))
+            {
+                serverSelectedCharacters = JsonConvert.DeserializeObject<List<string>>(
+                    combinedInfoResult.Result.InfoResultPayload.UserData["SelectedCharacters"].Value,
+                    new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+                );
+
+                // Validate client selection matches server
+                if (serverSelectedCharacters != null && 
+                    (selectedCharacters.Count != serverSelectedCharacters.Count ||
+                     !selectedCharacters.All(serverSelectedCharacters.Contains)))
+                {
+                    throw new Exception("Selected characters mismatch between client and server");
+                }
+            }
+
             var playerInfo = new PlayerInfo
             {
                 TitleData = combinedInfoResult.Result.InfoResultPayload.TitleData,
                 PlayerStatistics = combinedInfoResult.Result.InfoResultPayload.PlayerStatistics,
                 UserData = combinedInfoResult.Result.InfoResultPayload.UserData,
-                SelectedCharacters = JsonConvert.DeserializeObject<List<string>>(
-                    combinedInfoResult
-                        .Result
-                        .InfoResultPayload
-                        .UserData["SelectedCharacters"]
-                        .Value,
-                    new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
-                )
+                SelectedCharacters = selectedCharacters
             };
 
             playerInfo.MaxMissionId = missionContext.IsMissionOrTower
@@ -302,7 +345,7 @@ namespace NinjaHorizon.Function
                 return new MissionData
                 {
                     Enemies = new List<string>(),
-                    Rewards = new Reward(),
+                    Rewards = new Reward { extra = new List<Extra>() },
                     NumberOfMission = 0
                 };
             }
@@ -312,15 +355,31 @@ namespace NinjaHorizon.Function
                 new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
             );
 
+            if (missionGradesList == null || missionGradesList.Count == 0)
+            {
+                throw new Exception("Mission grades data not found");
+            }
+
             var missionGradeData = missionGradesList.Find(mg =>
                 mg.mission_grade_id == missionContext.MissionGradeId
             );
+
+            if (missionGradeData == null)
+            {
+                throw new Exception($"Mission grade {missionContext.MissionGradeId} not found");
+            }
+
+            if (missionContext.MissionId >= missionGradeData.missions.Count)
+            {
+                throw new Exception($"Mission {missionContext.MissionId} not found in grade {missionContext.MissionGradeId}");
+            }
+
             var mission = missionGradeData.missions[missionContext.MissionId];
 
             return new MissionData
             {
-                Enemies = mission.enemies,
-                Rewards = mission.rewards,
+                Enemies = mission.enemies ?? new List<string>(),
+                Rewards = mission.rewards ?? new Reward { extra = new List<Extra>() },
                 NumberOfMission = missionGradeData.missions.Count - 1
             };
         }
@@ -348,43 +407,44 @@ namespace NinjaHorizon.Function
 
             if (missionContext.IsMission)
             {
-                float rewardScaler = 1 + (missionContext.Difficulty * 2 / 10f);
+                float rewardMultiplier = MissionRewardConfig.GetRewardMultiplier(missionContext.Difficulty);
                 grantedRewards = new Reward
                 {
                     extra = new List<Extra>(),
-                    xp = (int)(missionData.Rewards.xp * rewardScaler),
-                    gold = (int)(missionData.Rewards.gold * rewardScaler),
+                    xp = (int)(missionData.Rewards.xp * rewardMultiplier),
+                    gold = (int)(missionData.Rewards.gold * rewardMultiplier),
                     token = 0
                 };
-                difficultyChanceBoost = Math.Max(1, missionContext.Difficulty * 2);
-                chanceBoostScaler = 1 + (missionContext.Difficulty * 1 / 2f);
+                difficultyChanceBoost = MissionRewardConfig.GetDropChanceBoost(missionContext.Difficulty);
+                chanceBoostScaler = MissionRewardConfig.GetChanceScaler(missionContext.Difficulty);
             }
             else if (missionContext.IsTower)
             {
+                int floorNumber = missionContext.MissionId + 1;
                 grantedRewards = new Reward
                 {
                     extra = new List<Extra>(),
-                    gold = (missionContext.MissionId + 1) * 100,
-                    xp = (missionContext.MissionId + 1) * 100,
-                    token = (missionContext.MissionId + 1) % 5 == 0 ? 5 : 0
+                    gold = floorNumber * MissionRewardConfig.TOWER_GOLD_MULTIPLIER,
+                    xp = floorNumber * MissionRewardConfig.TOWER_XP_MULTIPLIER,
+                    token = floorNumber % MissionRewardConfig.TOWER_TOKEN_FREQUENCY == 0 
+                        ? MissionRewardConfig.TOWER_TOKEN_AMOUNT 
+                        : 0
                 };
-                difficultyChanceBoost = Math.Max(1, missionContext.Difficulty * 2);
-                chanceBoostScaler = 1 + (missionContext.Difficulty * 1 / 2f);
+                difficultyChanceBoost = MissionRewardConfig.GetDropChanceBoost(missionContext.Difficulty);
+                chanceBoostScaler = MissionRewardConfig.GetChanceScaler(missionContext.Difficulty);
             }
-            else
+            else // Hunting House
             {
-                float rewardScaler = 1 + (missionContext.FloorId / 2);
-                float baseXp = 400;
-                float baseGold = 400;
+                float rewardScaler = MissionRewardConfig.GetHuntingHouseRewardScaler(missionContext.FloorId);
                 grantedRewards = new Reward
                 {
                     extra = new List<Extra>(),
-                    xp = (int)(baseXp * rewardScaler),
-                    gold = (int)(baseGold * rewardScaler),
+                    xp = (int)(MissionRewardConfig.HUNTING_HOUSE_BASE_XP * rewardScaler),
+                    gold = (int)(MissionRewardConfig.HUNTING_HOUSE_BASE_GOLD * rewardScaler),
                     token = 0
                 };
-                difficultyChanceBoost = 30 + (missionContext.FloorId + 1) * 7;
-                chanceBoostScaler = 1 + (missionContext.FloorId / 9f);
+                difficultyChanceBoost = MissionRewardConfig.GetHuntingHouseDropChance(missionContext.FloorId);
+                chanceBoostScaler = MissionRewardConfig.GetHuntingHouseChanceScaler(missionContext.FloorId);
             }
 
             return new RewardContext
@@ -507,21 +567,20 @@ namespace NinjaHorizon.Function
 
         private static void TryGrantEnergyReward(RewardContext rewardContext, ResultData resultData)
         {
-            int randomNumber = new Random().Next(1, 101);
-            int energyAmountToGrant = 1;
-            if (randomNumber <= 30)
+            int randomNumber = _random.Next(1, 101);
+            if (randomNumber <= MissionRewardConfig.ENERGY_DROP_CHANCE)
             {
                 //energy data is in resultData.UserDataRecord since we used it before
                 var energyData = JsonConvert.DeserializeObject<EnergyData>(
                     resultData.UserDataRecord["EnergyData"].Value,
                     new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
                 );
-                energyData.currentEnergy = energyData.currentEnergy + energyAmountToGrant;
+                energyData.currentEnergy += MissionRewardConfig.ENERGY_DROP_AMOUNT;
                 resultData.UserDataRecord["EnergyData"] = new UserDataRecord
                 {
                     Value = JsonConvert.SerializeObject(energyData)
                 };
-                rewardContext.GrantedRewards.energy = energyAmountToGrant;
+                rewardContext.GrantedRewards.energy = MissionRewardConfig.ENERGY_DROP_AMOUNT;
             }
             else
             {
@@ -620,16 +679,22 @@ namespace NinjaHorizon.Function
             ResultData resultData
         )
         {
-            int randomNumber = new Random().Next(1, 101);
-            if (randomNumber <= rewardContext.DifficultyChanceBoost)
+            if (missionData.Enemies == null || missionData.Enemies.Count == 0)
             {
-                string enemyId = missionData.Enemies[
-                    new Random().Next(0, missionData.Enemies.Count)
-                ];
+                return;
+            }
+
+            int randomChance = _random.Next(1, 101);
+            if (randomChance <= rewardContext.DifficultyChanceBoost)
+            {
+                int enemyTier = MissionRewardConfig.GetEnemyTier(0); // Default to normal difficulty tier
+                string enemyId = missionData.Enemies[_random.Next(0, missionData.Enemies.Count)];
+                
                 AddToInventory(
                     resultData,
                     new Extra() { id = enemyId, stackable = false },
                     1,
+                    enemyTier,
                     rewardContext.GrantedRewards
                 );
             }
@@ -641,16 +706,17 @@ namespace NinjaHorizon.Function
             ResultData resultData
         )
         {
-            int randomNumber = new Random().Next(1, 101);
+            int randomChance = _random.Next(1, 101);
             int amount = extra.amount == 0 ? 1 : extra.amount;
             int chance =
                 extra.chance == 0
                     ? rewardContext.DifficultyChanceBoost
                     : (int)(extra.chance * rewardContext.ChanceBoostScaler);
 
-            if ((extra.firstTime && rewardContext.FirstClear) || randomNumber <= chance)
+            if ((extra.firstTime && rewardContext.FirstClear) || randomChance <= chance)
             {
-                AddToInventory(resultData, extra, amount, rewardContext.GrantedRewards);
+                int tier = 0; // Default tier for materials/stackable items
+                AddToInventory(resultData, extra, amount, tier, rewardContext.GrantedRewards);
             }
         }
 
@@ -658,29 +724,41 @@ namespace NinjaHorizon.Function
             ResultData resultData,
             Extra extra,
             int amount,
+            int tier,
             Reward grantedRewards
         )
         {
             string id = extra.id;
-            string stackId = extra.stackable ? null : Guid.NewGuid().ToString();
-            resultData.InventoryOperations.Add(
-                new InventoryOperation
+            bool isStackable = extra.stackable;
+            string stackId = isStackable ? null : Guid.NewGuid().ToString();
+            
+            // Determine if this item needs display properties (characters, weapons, etc.)
+            bool needsDisplayProperties = !isStackable;
+            
+            var operation = new InventoryOperation
+            {
+                Add = new AddInventoryItemsOperation
                 {
-                    Add = new AddInventoryItemsOperation
-                    {
-                        Item = new InventoryItemReference { Id = id, StackId = stackId, },
-                        Amount = amount
-                    }
+                    Item = new InventoryItemReference { Id = id, StackId = stackId },
+                    Amount = amount,
+                    NewStackValues = needsDisplayProperties
+                        ? new InitialValues { DisplayProperties = new { tier } }
+                        : null
                 }
-            );
+            };
+            
+            resultData.InventoryOperations.Add(operation);
+            
             resultData.InventoryItems.Add(
                 new InventoryItem
                 {
                     Id = id,
                     StackId = stackId,
-                    Amount = amount
+                    Amount = amount,
+                    DisplayProperties = needsDisplayProperties ? new { tier } : null
                 }
             );
+            
             grantedRewards.extra.Add(new Extra { id = id, amount = amount });
         }
 
@@ -732,18 +810,34 @@ namespace NinjaHorizon.Function
             int scaledMissionId
         )
         {
-            if (playerStatistics.Count == 1)
+            if (playerStatistics == null || playerStatistics.Count == 0)
             {
-                int maxMissionId = playerStatistics
-                    .Find(stat => stat.StatisticName == missionGrade)
-                    .Value;
-                if (maxMissionId < scaledMissionId)
+                // First mission ever, allow if it's the starting mission (scaledId == 0)
+                if (scaledMissionId == 0)
                 {
-                    throw new Exception("Player can't do this mission");
+                    return 0;
                 }
-                return maxMissionId;
+                throw new Exception("Player can't do this mission - no progression data");
             }
-            return 0;
+
+            var stat = playerStatistics.Find(s => s.StatisticName == missionGrade);
+            if (stat == null)
+            {
+                // No progress in this mission grade yet
+                if (scaledMissionId == 0)
+                {
+                    return 0;
+                }
+                throw new Exception($"Player can't do this mission - no progression in {missionGrade}");
+            }
+
+            int maxMissionId = stat.Value;
+            if (maxMissionId < scaledMissionId)
+            {
+                throw new Exception($"Player can't do this mission. Current progress: {maxMissionId}, Required: {scaledMissionId}");
+            }
+
+            return maxMissionId;
         }
 
         private static int GetHuntingHouseMaxBossFloor(
@@ -823,36 +917,28 @@ namespace NinjaHorizon.Function
         {
             if (missionContext.IsHuntingHouse)
             {
-                if (missionContext.FloorId <= 2)
+                return missionContext.FloorId switch
                 {
-                    return 5;
-                }
-                else if (missionContext.FloorId <= 5)
-                {
-                    return 6;
-                }
-                else if (missionContext.FloorId <= 7)
-                {
-                    return 7;
-                }
-                return 8;
+                    <= 2 => MissionRewardConfig.HUNTING_HOUSE_FLOOR_0_2_ENERGY,
+                    <= 5 => MissionRewardConfig.HUNTING_HOUSE_FLOOR_3_5_ENERGY,
+                    <= 7 => MissionRewardConfig.HUNTING_HOUSE_FLOOR_6_7_ENERGY,
+                    _ => MissionRewardConfig.HUNTING_HOUSE_FLOOR_8_PLUS_ENERGY
+                };
             }
             else if (missionContext.IsMission)
             {
-                if (missionContext.Difficulty == 0)
+                return missionContext.Difficulty switch
                 {
-                    return 3;
-                }
-                else if (missionContext.Difficulty == 1)
-                {
-                    return 4;
-                }
-                return 5;
+                    0 => MissionRewardConfig.VILLAGE_DIFFICULTY_0_ENERGY,
+                    1 => MissionRewardConfig.VILLAGE_DIFFICULTY_1_ENERGY,
+                    _ => MissionRewardConfig.VILLAGE_DIFFICULTY_2_ENERGY
+                };
             }
             else if (missionContext.IsTower)
             {
-                return 5;
+                return MissionRewardConfig.TOWER_ENERGY;
             }
+            
             return 0;
         }
     }

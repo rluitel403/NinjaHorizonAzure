@@ -27,10 +27,8 @@ namespace NinjaHorizon.Function
 
     public class AchievementTracker
     {
-        public int id { get; set; }
         public int progress { get; set; }
         public bool completed { get; set; }
-
         public bool claimed { get; set; }
     }
 
@@ -48,12 +46,13 @@ namespace NinjaHorizon.Function
             string dailyRewardProgressKey = "DailyRewardProgress";
             string energyDataKey = "EnergyData";
             string dailyRewardsTitleDataKey = "dailyRewards";
+            string starterCharacterGrantedKey = "StarterCharacterGranted";
 
             DateTime today = DateTime.UtcNow;
 
-            // Get user's data to check daily reward progress
+            // Get user's data to check daily reward progress and starter character flag
             var userData = await playfabUtil.GetUserData(
-                new List<string> { dailyRewardProgressKey, energyDataKey }
+                new List<string> { dailyRewardProgressKey, energyDataKey, starterCharacterGrantedKey }
             );
 
             // Handle energy restoration first
@@ -103,6 +102,31 @@ namespace NinjaHorizon.Function
             List<InventoryOperation> inventoryOperations = new List<InventoryOperation>();
             List<InventoryItem> inventoryItems = new List<InventoryItem>();
 
+            // Check if starter character has already been granted
+            bool starterCharacterGranted = userData.Data.ContainsKey(starterCharacterGrantedKey) 
+                && userData.Data[starterCharacterGrantedKey].Value == "true";
+            
+            // Grant starter character to new players (only once, ever)
+            if (!starterCharacterGranted)
+            {
+                const string STARTER_CHARACTER_ID = "388725f6-126a-4c5b-b998-dc8896dc500d";
+                const string CHARACTER_TYPE = "Entity";
+                const int STARTER_TIER = 0; // 1 star character
+                
+                inventoryOperations.Add(
+                    PlayFabUtil.CreateAddNewItemOperation(STARTER_CHARACTER_ID, CHARACTER_TYPE, 1, STARTER_TIER)
+                );
+                
+                inventoryItems.Add(
+                    PlayFabUtil.CreateNewInventoryItem(STARTER_CHARACTER_ID, CHARACTER_TYPE, 1, STARTER_TIER)
+                );
+                
+                // Mark starter character as granted
+                userDataToUpdate[starterCharacterGrantedKey] = "true";
+                
+                log.LogInformation($"DailyCheckIn: Granting starter character to new player");
+            }
+
             if (isEligible)
             {
                 // Get current daily reward day
@@ -132,49 +156,38 @@ namespace NinjaHorizon.Function
                 }
                 else
                 {
-                    string stackId = PlayFabUtil.GetStackIdFromType(todayReward.type);
-
+                    // Grant item reward (character, weapon, etc.)
                     inventoryOperations.Add(
-                        new InventoryOperation
-                        {
-                            Add = new AddInventoryItemsOperation
-                            {
-                                Item = new InventoryItemReference
-                                {
-                                    Id = todayReward.itemId,
-                                    StackId = stackId
-                                },
-                                Amount = todayReward.amount,
-                                //if its entity or weapon, set the tier since we can grant high tier items
-                                NewStackValues =
-                                    stackId != null
-                                        ? new InitialValues
-                                        {
-                                            DisplayProperties = new { todayReward.tier }
-                                        }
-                                        : null
-                            }
-                        }
+                        PlayFabUtil.CreateAddNewItemOperation(
+                            todayReward.itemId, 
+                            todayReward.type, 
+                            todayReward.amount, 
+                            todayReward.tier
+                        )
                     );
+                    
                     inventoryItems.Add(
-                        new InventoryItem
-                        {
-                            Id = todayReward.itemId,
-                            StackId = stackId,
-                            Amount = todayReward.amount,
-                            DisplayProperties = stackId != null ? new { todayReward.tier } : null
-                        }
+                        PlayFabUtil.CreateNewInventoryItem(
+                            todayReward.itemId, 
+                            todayReward.type, 
+                            todayReward.amount, 
+                            todayReward.tier
+                        )
                     );
                 }
-
-                // Execute inventory operations
-                await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
 
                 //reset day if all rewards are claimed
                 if (dailyRewardProgress.day >= dailyRewards.Count - 1)
                 {
                     dailyRewardProgress.day = -1;
                 }
+            }
+            
+            // Execute all inventory operations (starter character + daily rewards if applicable)
+            if (inventoryOperations.Count > 0)
+            {
+                await playfabUtil.ExecuteInventoryOperations(inventoryOperations);
+                log.LogInformation($"DailyCheckIn: Granted {inventoryOperations.Count} operations");
             }
 
             // Always update energy data since we restored it
@@ -188,6 +201,9 @@ namespace NinjaHorizon.Function
             // Update user data
             await playfabUtil.UpdateUserData(userDataToUpdate);
 
+            // Log what we're returning for debugging
+            log.LogInformation($"DailyCheckIn: Returning {inventoryItems.Count} inventory items");
+            
             return JsonConvert.SerializeObject(
                 new
                 {
